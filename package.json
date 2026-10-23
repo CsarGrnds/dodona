@@ -1,0 +1,28 @@
+{
+  "name": "dodona",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dodona — browser-based investment analytics with a per-ticker AI agent that suggests buy/sell/hold.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.2.0",
+    "lightweight-charts": "^5.2.1",
+    "next": "^15.5.28",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "yahoo-finance2": "^4.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
