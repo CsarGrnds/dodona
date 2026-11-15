@@ -15,6 +15,7 @@
 
 import type { Bar } from "./types";
 import { atr, rsi } from "./indicators";
+import { FILTERS, lastIndexOnOrBefore, marketAt, marketBefore, ORB_VOLUME_X, passes, relativeStrength, SWING_VOLUME_X, volumeRatio, type FilterKey, type MarketSeries, type SignalContext } from "./market";
 import { findSwingSetups, orbHit, orMidStop, SWING_SETUPS, type Session, type SwingSetup } from "./setups";
 
 export interface TradeResult {
@@ -26,6 +27,14 @@ export interface TradeResult {
   exit: number;
   R: number;
   days: number; // bars held (swing) or 5-minute bars (intraday)
+  ctx?: SignalContext; // market / relative strength / volume at the signal
+}
+
+export type FilteredRecords = Record<FilterKey, TrackRecord>;
+
+/** The same trades, split by each confirmation filter (only trades where the filter passed). */
+export function filterRecords(trades: TradeResult[], volumeX: number, kind?: string): FilteredRecords {
+  return Object.fromEntries(FILTERS.map((f) => [f.key, summarize(trades.filter((t) => passes(t.ctx, f.key, volumeX)), kind)])) as FilteredRecords;
 }
 
 export interface TrackRecord {
@@ -62,6 +71,7 @@ export interface SwingBacktest {
   to?: string;
   bars: number;
   bySetup: Record<SwingSetup, TrackRecord>;
+  filtered?: Record<SwingSetup, FilteredRecords>; // present when market data was supplied
   baseline: Baseline;
 }
 
@@ -110,7 +120,15 @@ function walkSwing(bars: Bar[], i: number, entry: number, stop: number, target: 
   return { date: bars[i].time, entry, stop, target, outcome: "time", exit, R: (exit - entry) / risk, days: end - i };
 }
 
-export function swingBacktest(bars: Bar[], params: SwingParams = DEFAULT_SWING_PARAMS): SwingBacktest {
+export function swingContext(bars: Bar[], i: number, market?: MarketSeries): SignalContext {
+  return {
+    marketUp: market ? marketAt(market, bars[i].time)?.above50 : undefined,
+    rs: market ? relativeStrength(bars, i, market) : undefined,
+    volX: volumeRatio(bars, i),
+  };
+}
+
+export function swingBacktest(bars: Bar[], params: SwingParams = DEFAULT_SWING_PARAMS, market?: MarketSeries): SwingBacktest {
   const closes = bars.map((b) => b.close);
   const rs = rsi(closes);
   const atrs = atr(bars);
@@ -132,6 +150,7 @@ export function swingBacktest(bars: Bar[], params: SwingParams = DEFAULT_SWING_P
     for (const tag of found.tags) {
       if (i <= busyUntil[tag]) continue;
       const t = walkSwing(bars, i, entry, stop, target, params.maxHoldDays);
+      t.ctx = swingContext(bars, i, market);
       trades[tag].push(t);
       busyUntil[tag] = i + t.days;
     }
@@ -159,6 +178,7 @@ export function swingBacktest(bars: Bar[], params: SwingParams = DEFAULT_SWING_P
     to: bars[bars.length - 1]?.time,
     bars: bars.length,
     bySetup: Object.fromEntries(SWING_SETUPS.map((s) => [s.key, summarize(trades[s.key])])) as Record<SwingSetup, TrackRecord>,
+    filtered: market ? (Object.fromEntries(SWING_SETUPS.map((s) => [s.key, filterRecords(trades[s.key], SWING_VOLUME_X)])) as Record<SwingSetup, FilteredRecords>) : undefined,
     baseline: {
       days: fwd.length,
       upRate: fwd.length ? fwd.filter((x) => x > 0).length / fwd.length : 0,
@@ -181,10 +201,27 @@ export interface OrbBacktest {
   params: OrbParams;
   sessions: number; // full sessions replayed
   record: TrackRecord;
+  filtered?: FilteredRecords; // present when market data was supplied
+}
+
+/** Context knowable at an intraday breakout: yesterday's market and RS, and the bar's volume vs the range. */
+export function orbContext(s: Session, barIndex: number, orBars: number, market?: MarketSeries, daily?: Bar[]): SignalContext {
+  const rangeVol = s.bars.slice(0, orBars).reduce((a, b) => a + b.volume, 0) / orBars;
+  let rs: number | undefined;
+  if (market && daily?.length) {
+    const i = lastIndexOnOrBefore(daily, s.date);
+    const prev = i === undefined ? undefined : daily[i].time === s.date ? i - 1 : i;
+    if (prev !== undefined && prev >= 0) rs = relativeStrength(daily, prev, market);
+  }
+  return {
+    marketUp: market ? marketBefore(market, s.date)?.above50 : undefined,
+    rs,
+    volX: rangeVol > 0 ? s.bars[barIndex].volume / rangeVol : undefined,
+  };
 }
 
 /** The Time Machine's history replay on every FULL session (half days and gaps left out). */
-export function orbBacktest(sessions: Session[], params: OrbParams = DEFAULT_ORB_PARAMS): OrbBacktest {
+export function orbBacktest(sessions: Session[], params: OrbParams = DEFAULT_ORB_PARAMS, market?: MarketSeries, daily?: Bar[]): OrbBacktest {
   const full = sessions.filter((s) => s.full);
   const trades: TradeResult[] = [];
   for (const s of full) {
@@ -211,7 +248,13 @@ export function orbBacktest(sessions: Session[], params: OrbParams = DEFAULT_ORB
       const exit = s.bars[s.bars.length - 1].close;
       res = { date: s.date, entry, stop, target, outcome: "time", exit, R: (exit - entry) / risk, days: s.bars.length - 1 - hit.barIndex };
     }
+    res.ctx = orbContext(s, hit.barIndex, params.orBars, market, daily);
     trades.push(res);
   }
-  return { params, sessions: full.length, record: summarize(trades, "breakout") };
+  return {
+    params,
+    sessions: full.length,
+    record: summarize(trades, "breakout"),
+    filtered: market ? filterRecords(trades, ORB_VOLUME_X, "breakout") : undefined,
+  };
 }

@@ -2,7 +2,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Brand, Disclaimer, Spinner } from "@/components/ui";
-import type { OrbBacktest, SwingBacktest, TrackRecord } from "@/lib/backtest";
+import type { FilteredRecords, OrbBacktest, SwingBacktest, TrackRecord } from "@/lib/backtest";
+import { FILTERS, ORB_VOLUME_X, passes, SWING_VOLUME_X, type MarketContext, type SignalContext } from "@/lib/market";
 import { fetchPortfolio, fmt } from "@/lib/client";
 import { buildTradePlan, type AccountContext, type PlanSettings, type TradePlan } from "@/lib/plan";
 import { findHolding, type Portfolio } from "@/lib/portfolio";
@@ -11,7 +12,7 @@ import { getPlanSettings, getSetupExtras, getWatchlist, setSetupExtras } from "@
 
 interface SetupsResult {
   symbol: string;
-  swing: null | { lastDate: string; close: number; atr14?: number; tags: SwingSetup[]; numbers: SwingNumbers; backtest: SwingBacktest };
+  swing: null | { lastDate: string; close: number; atr14?: number; tags: SwingSetup[]; numbers: SwingNumbers; market?: MarketContext; context: SignalContext; backtest: SwingBacktest };
   intraday: null | {
     session: { date: string; bars: number; full: boolean; inProgress: boolean };
     status: "triggered" | "waiting" | "forming" | "no-breakout";
@@ -19,6 +20,8 @@ interface SetupsResult {
     orLow?: number;
     lastPrice?: number;
     hit: OrbHit | null;
+    market?: MarketContext;
+    context?: SignalContext;
     stop?: number;
     backtest: OrbBacktest;
   };
@@ -129,6 +132,7 @@ export default function SetupsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, symbols, settings, pf]);
 
+  const swingMarket = symbols.map((s) => rows[s]?.data?.swing?.market).find(Boolean);
   const done = symbols.filter((s) => rows[s]?.data || rows[s]?.error).length;
   const errors = symbols.filter((s) => rows[s]?.error);
   const noSetup = symbols.filter((s) => rows[s]?.data?.swing && !rows[s]!.data!.swing!.tags.length);
@@ -186,6 +190,7 @@ export default function SetupsPage() {
       </section>
 
       <div className="grid" style={{ gap: 14 }}>
+        {swingMarket && <MarketBanner m={swingMarket} />}
         <section className="panel">
           <h2>Swing setups · last daily close{swingRows[0] ? ` (${swingRows[0].d.lastDate})` : ""}</h2>
           <p className="muted small" style={{ marginTop: -6 }}>
@@ -197,7 +202,7 @@ export default function SetupsPage() {
             <div className="table-scroll">
               <table>
                 <thead>
-                  <tr><th>Ticker</th><th>Setup</th><th>Close</th><th>Plan</th><th>Track record on this stock</th><th>vs any day</th></tr>
+                  <tr><th>Ticker</th><th>Setup</th><th>Close</th><th>Confirmation</th><th>Plan</th><th>Track record on this stock</th><th>vs any day</th></tr>
                 </thead>
                 <tbody>
                   {swingRows.map(({ sym, tag, d, rec, plan }) => (
@@ -205,8 +210,9 @@ export default function SetupsPage() {
                       <td><Link className="mono" href={`/ticker/${encodeURIComponent(sym)}?strategy=swing`}>{sym}</Link>{findHolding(pf, sym) && <div className="muted small">held</div>}</td>
                       <td title={SWING_SETUPS.find((s) => s.key === tag)?.rule}>{SETUP_LABEL[tag]}{tag.startsWith("oversold") && d.numbers.rsi !== undefined && <div className="muted small">RSI {d.numbers.rsi.toFixed(0)}</div>}</td>
                       <td className="mono">{fmt.num(d.close)}</td>
+                      <td className="small"><Confirm ctx={d.context} volumeX={SWING_VOLUME_X} /></td>
                       <td className="small"><PlanCell plan={plan} /></td>
-                      <td className="small"><RecordCell rec={rec} /></td>
+                      <td className="small"><RecordCell rec={rec} /><FilteredLine f={d.backtest.filtered?.[tag]} /></td>
                       <td className="small mono">
                         <Edge r={rec.trades ? rec.avgR - d.backtest.baseline.avgR : undefined} />
                         <div className="muted">any day {signedR(d.backtest.baseline.avgR)}</div>
@@ -231,7 +237,7 @@ export default function SetupsPage() {
             <div className="table-scroll">
               <table>
                 <thead>
-                  <tr><th>Ticker</th><th>Status</th><th>Opening range</th><th>Plan</th><th>Last ~60 sessions</th></tr>
+                  <tr><th>Ticker</th><th>Status</th><th>Opening range</th><th>Confirmation</th><th>Plan</th><th>Last ~60 sessions</th></tr>
                 </thead>
                 <tbody>
                   {orbRows.map(({ sym, d, plan }) => (
@@ -239,6 +245,7 @@ export default function SetupsPage() {
                       <td><Link className="mono" href={`/ticker/${encodeURIComponent(sym)}?strategy=swing`}>{sym}</Link>{findHolding(pf, sym) && <div className="muted small">held</div>}</td>
                       <td className="small"><OrbStatus d={d} /></td>
                       <td className="mono small">{d.orLow !== undefined ? `${fmt.num(d.orLow)}–${fmt.num(d.orHigh)}` : "—"}</td>
+                      <td className="small">{d.context ? <Confirm ctx={d.context} volumeX={ORB_VOLUME_X} /> : <span className="muted">—</span>}</td>
                       <td className="small">
                         {!d.hit ? (
                           <span className="muted">—</span>
@@ -253,6 +260,7 @@ export default function SetupsPage() {
                       <td className="small">
                         <RecordCell rec={d.backtest.record} />
                         <div className="muted">fired {d.backtest.record.trades} of {d.backtest.sessions} sessions</div>
+                        <FilteredLine f={d.backtest.filtered} />
                       </td>
                     </tr>
                   ))}
@@ -263,7 +271,7 @@ export default function SetupsPage() {
         </section>
 
         <p className="muted small">
-          A track record is how a rule did in the past on this stock, not a forecast: earnings, news and gaps can do things the history never did. R = profit in units of the risk per share (+2R = twice what you risked, −1R = stopped out). No commissions or slippage; a gap through the stop counts −1R but a real fill can be worse. Use the Time Machine skill (<span className="mono">/trader-timemachine</span>) for 10,000 simulated sessions of a live intraday plan.
+          Confirmation: <b>Market</b> = SPY above its 50-day average (intraday: as of the previous close); <b>RS</b> = 3-month return minus SPY&apos;s; <b>Vol</b> = swing: setup-day volume vs the 20-day average (≥{SWING_VOLUME_X}×), intraday: breakout bar vs the opening-range bars (≥{ORB_VOLUME_X}×, trader-entry&apos;s check). &quot;When confirmed&quot; shows the track record of only the past trades where that check passed. A track record is how a rule did in the past on this stock, not a forecast: earnings, news and gaps can do things the history never did. R = profit in units of the risk per share (+2R = twice what you risked, −1R = stopped out). No commissions or slippage; a gap through the stop counts −1R but a real fill can be worse. Use the Time Machine skill (<span className="mono">/trader-timemachine</span>) for 10,000 simulated sessions of a live intraday plan.
         </p>
       </div>
       <Disclaimer />
@@ -317,4 +325,49 @@ function OrbStatus({ d }: { d: NonNullable<SetupsResult["intraday"]> }) {
   }
   if (d.status === "forming") return <span className="muted">Opening range forming</span>;
   return <span className="muted">No breakout</span>;
+}
+
+function MarketBanner({ m }: { m: MarketContext }) {
+  const cls = m.trend === "up" ? "up" : m.trend === "down" ? "down" : "";
+  return (
+    <div className={m.trend === "down" ? "warn" : "panel"} style={{ padding: "10px 14px" }}>
+      <span className="small">
+        Market ({m.symbol}, {m.date}): <b className={cls}>{m.trend === "up" ? "uptrend" : m.trend === "down" ? "downtrend" : "mixed"}</b> · {m.detail}
+        {m.return3m !== undefined && <> · 3 months {fmt.signedPct(m.return3m)}</>}
+        {m.trend === "down" && " · long setups fail more often in a falling market"}
+      </span>
+    </div>
+  );
+}
+
+function Confirm({ ctx, volumeX }: { ctx: SignalContext; volumeX: number }) {
+  const mark = (ok: boolean | undefined) => (ok === undefined ? <span className="muted">?</span> : ok ? <span className="up">✓</span> : <span className="down">✗</span>);
+  return (
+    <div className="confirm">
+      <span title="SPY above its 50-day average">{mark(ctx.marketUp)} Market</span>
+      <span title="3-month return minus SPY's">{mark(ctx.rs === undefined ? undefined : ctx.rs > 0)} RS {ctx.rs !== undefined ? fmt.signedPct(ctx.rs) : ""}</span>
+      <span title={`Volume vs average (needs ≥${volumeX}×)`}>{mark(ctx.volX === undefined ? undefined : ctx.volX >= volumeX)} Vol {ctx.volX !== undefined ? `${ctx.volX.toFixed(1)}×` : ""}</span>
+      {passes(ctx, "all", volumeX) && <span className="up">all confirmed</span>}
+    </div>
+  );
+}
+
+function FilteredLine({ f }: { f?: FilteredRecords }) {
+  if (!f) return null;
+  return (
+    <div className="muted filtered-line">
+      When confirmed:{" "}
+      {FILTERS.map((x, i) => {
+        const r = f[x.key];
+        return (
+          <span key={x.key} title={`${x.label}: ${x.rule}. ${r.verdict}`}>
+            {i ? " · " : ""}
+            {x.key === "all" ? "all" : x.key === "rs" ? "RS" : x.key === "volume" ? "vol" : "mkt"}{" "}
+            {r.trades ? <span className={r.avgR > 0.05 ? "up" : r.avgR < -0.05 ? "down" : ""}>{signedR(r.avgR)}</span> : "—"}
+            <span> ({r.trades})</span>
+          </span>
+        );
+      })}
+    </div>
+  );
 }

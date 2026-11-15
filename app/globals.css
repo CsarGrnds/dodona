@@ -121,3 +121,5 @@ pre { background: var(--panel-2); padding: 8px 12px; border-radius: 8px; }
 .chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-family: var(--mono); font-size: 12px; color: var(--text); }
 .chip:hover { border-color: var(--sell); }
 .past-plan { opacity: 0.6; }
+.confirm { display: flex; flex-direction: column; gap: 2px; white-space: nowrap; }
+.filtered-line { margin-top: 2px; }

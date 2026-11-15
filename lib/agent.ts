@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type { MarketContext } from "./market";
 import type { Action, AgentView, Fundamentals, Indicators, NewsItem, Quote, RuleSignal, Strategy } from "./types";
 
 export interface PreviousCall {
@@ -18,6 +19,7 @@ Rules:
 - Strategy "dividend" = long-term dividend-growth investor: favor accumulating quality at good yields, trimming only on clear overvaluation or dividend-safety risk. Avoid churn.
 - Strategy "swing" = multi-day to multi-week technical trader: respect trend, momentum and risk levels.
 - If a previous call exists, say whether it still holds and what changed. Don't flip calls on noise.
+- If marketContext is provided, weigh it: long swing setups in a falling market (SPY below its 50- and 200-day averages) deserve lower confidence; stocks stronger than the market (relativeStrength3m > 0) deserve more.
 - Be concise and concrete. This is decision support, not financial advice.
 
 Respond with ONLY a JSON object, no prose around it:
@@ -35,6 +37,8 @@ export async function runAgent(input: {
   rules: RuleSignal;
   news: NewsItem[];
   previous?: PreviousCall;
+  market?: MarketContext;
+  relativeStrength?: number;
 }): Promise<AgentView> {
   const client = new Anthropic();
   const payload = {
@@ -52,6 +56,8 @@ export async function runAgent(input: {
     },
     recentNews: input.news.slice(0, 8).map((n) => ({ title: n.title, publisher: n.publisher, publishedAt: n.publishedAt })),
     previousCall: input.previous ?? null,
+    marketContext: input.market ?? null,
+    relativeStrength3m: input.relativeStrength ?? null,
   };
 
   const msg = await client.messages.create({

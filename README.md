@@ -62,6 +62,9 @@ Tests: `npm test` · Typecheck: `npm run typecheck`
 - **Intraday** (5-minute bars): the opening-range breakout (first close above the first 15 minutes' high), stop at the range midpoint, flat by the close.
 - **Track record per stock**: every past time the setup fired (~3 years daily, ~60 sessions intraday), traded with the same stop and target, as average R, win rate and target/stop/timed-out counts. Swing setups are compared with the same plan entered on any day, which is what a setup has to beat. Samples under 10 trades are flagged.
 
+- **Confirmation** (`lib/market.ts`): market (SPY above its 50-day average; intraday uses the previous close, so no look-ahead), relative strength (3-month return minus SPY's) and volume (swing: ≥1.5× the 20-day average; intraday: breakout bar ≥1.0× the opening-range bars, `/trader-entry`'s check). Each setup shows today's checks plus "when confirmed": the track record of only the past trades where each check passed, so you can see whether it helps on that stock.
+- The swing rule engine scores the market trend and relative strength as factors too, and the Claude agent receives both.
+
 A track record is the past, not a forecast. No commissions or slippage; a gap through a stop can fill worse than −1R.
 
 ## Portfolio (Interactive Brokers)
@@ -92,6 +95,7 @@ Positions update only when you sync; the page flags a sync older than a day.
 ## Roadmap ideas
 
 - Server-side scheduler (Cloud Run job / cron) so agents follow tickers even with the browser closed, plus a DB (Postgres/Firestore) for shared history
+- Support and resistance levels; earnings-date awareness
 - Market-wide scan (~5,900 symbols) on the Setups page, like `/trader-scanner daily`
 - Earnings-calendar and ex-dividend triggers; SEC filings in the agent context
 - Direct IBKR Client Portal API so positions refresh without asking Claude to sync
