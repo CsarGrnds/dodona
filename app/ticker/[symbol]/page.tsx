@@ -2,6 +2,7 @@
 import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import PriceChart from "@/components/PriceChart";
+import TradePlan from "@/components/TradePlan";
 import { Badge, Brand, Confidence, Disclaimer, Spinner, StrategyToggle } from "@/components/ui";
 import { fmt, runAnalysis } from "@/lib/client";
 import { getHistory, getSettings, getWatchlist, setWatchlist, type CallRecord } from "@/lib/store";
@@ -144,6 +145,8 @@ function TickerPage() {
               </div>
             </section>
           </div>
+
+          <TradePlan analysis={a} />
 
           <div className="grid two">
             <section className="panel">

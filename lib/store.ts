@@ -1,6 +1,7 @@
 "use client";
 // Browser-side persistence: watchlist, per-ticker call history, settings.
 // localStorage keeps v1 simple and private to this browser. Swap for a DB later.
+import { normalizePlanSettings, type PlanSettings } from "./plan";
 import type { Action, Analysis, Strategy } from "./types";
 
 export interface WatchItem {
@@ -32,6 +33,7 @@ const K = {
   hist: (s: string) => `dodona.history.v1.${s}`,
   last: (s: string) => `dodona.last.v1.${s}`,
   settings: "dodona.settings.v1",
+  plan: "dodona.plan.v1",
 };
 
 function read<T>(key: string, fallback: T): T {
@@ -66,6 +68,8 @@ export const getLastAnalysis = (symbol: string) => read<Analysis | null>(K.last(
 export function recordAnalysis(a: Analysis): CallRecord | undefined {
   const hist = getHistory(a.symbol);
   const prev = hist[hist.length - 1];
+  // Same analysis delivered twice (e.g. React dev double-invoking an effect): don't log it again.
+  if (hist.some((h) => h.generatedAt === a.generatedAt && h.strategy === a.strategy)) return prev;
   const rec: CallRecord = {
     generatedAt: a.generatedAt,
     action: a.final.action,
@@ -85,3 +89,6 @@ export function recordAnalysis(a: Analysis): CallRecord | undefined {
 export const DEFAULT_SETTINGS: Settings = { autoFollow: true, intervalMin: 15, useAgent: true, notify: false };
 export const getSettings = () => ({ ...DEFAULT_SETTINGS, ...read<Partial<Settings>>(K.settings, {}) });
 export const setSettings = (s: Settings) => write(K.settings, s);
+
+export const getPlanSettings = () => normalizePlanSettings(read<Partial<PlanSettings> | null>(K.plan, null));
+export const setPlanSettings = (s: PlanSettings) => write(K.plan, s);

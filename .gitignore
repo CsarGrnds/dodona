@@ -6,3 +6,7 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store
+
+# day-trader skills working folder (config, plans, orders, broker log)
+trader/
+__pycache__/

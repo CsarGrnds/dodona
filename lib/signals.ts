@@ -4,6 +4,7 @@ import type { Action, Factor, Fundamentals, Indicators, RuleSignal, Strategy } f
 // The agent (Claude) sees these factors and can agree or override with reasoning.
 
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+const TOKEN_YIELD = 0.01; // yields under 1% are "token" dividends
 const BUY_AT = 25;
 const SELL_AT = -25;
 
@@ -23,7 +24,14 @@ export function dividendSignal(price: number, ind: Indicators, f: Fundamentals):
   const factors: Factor[] = [];
 
   // 1. Yield vs its own 5-year average: the classic "yield theory" valuation.
-  if (f.dividendYield !== undefined && f.fiveYearAvgDividendYield) {
+  // Below ~1% the ratio is noise (a 0.6% vs 0.03% yield reads as "20×"), so it isn't scored.
+  if (f.dividendYield !== undefined && f.dividendYield > 0 && f.dividendYield < TOKEN_YIELD) {
+    factors.push({
+      name: "Dividend",
+      score: -1,
+      detail: `Token yield ${pct(f.dividendYield)}: too small for yield-based valuation; weak fit for a dividend strategy`,
+    });
+  } else if (f.dividendYield !== undefined && f.fiveYearAvgDividendYield && f.fiveYearAvgDividendYield >= TOKEN_YIELD / 2) {
     const ratio = f.dividendYield / f.fiveYearAvgDividendYield;
     const score = ratio >= 1.15 ? 2 : ratio >= 1.05 ? 1 : ratio <= 0.75 ? -2 : ratio <= 0.88 ? -1 : 0;
     factors.push({
@@ -82,7 +90,7 @@ export function dividendSignal(price: number, ind: Indicators, f: Fundamentals):
   }
 
   const levels: RuleSignal["levels"] = {};
-  if (f.dividendRate && f.fiveYearAvgDividendYield) {
+  if (f.dividendRate && f.fiveYearAvgDividendYield && f.fiveYearAvgDividendYield >= TOKEN_YIELD / 2 && (f.dividendYield ?? 0) >= TOKEN_YIELD) {
     levels.buyBelow = round(f.dividendRate / (f.fiveYearAvgDividendYield * 1.1));
     levels.trimAbove = round(f.dividendRate / (f.fiveYearAvgDividendYield * 0.8));
   } else if (ind.sma200) {
@@ -144,7 +152,7 @@ export function swingSignal(price: number, ind: Indicators): RuleSignal {
 
   const levels: RuleSignal["levels"] = {};
   if (atr14) {
-    levels.stopLoss = round(price - 2 * atr14);
+    levels.stopLoss = Math.floor((price - 2 * atr14) * 100 + 1e-9) / 100; // round down, matches lib/plan.ts
     levels.takeProfit = round(price + 3 * atr14);
   }
   return finalize("swing", factors, levels);

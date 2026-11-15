@@ -1,4 +1,5 @@
 "use client";
+import type { Portfolio } from "./portfolio";
 import { getHistory, recordAnalysis, type CallRecord } from "./store";
 import type { Analysis, Strategy } from "./types";
 
@@ -21,6 +22,24 @@ export async function runAnalysis(symbol: string, strategy: Strategy, useAgent: 
   const analysis = data as Analysis;
   const previous = recordAnalysis(analysis);
   return { analysis, previous };
+}
+
+/** The synced IBKR portfolio, or null if none. Fetched once per page load. */
+let portfolioPromise: Promise<Portfolio | null> | undefined;
+export function fetchPortfolio(refresh = false): Promise<Portfolio | null> {
+  if (!portfolioPromise || refresh) {
+    portfolioPromise = fetch("/api/portfolio", { cache: "no-store" })
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error ?? `Portfolio failed (${r.status})`);
+        return (d.portfolio ?? null) as Portfolio | null;
+      })
+      .catch((e) => {
+        portfolioPromise = undefined;
+        throw e;
+      });
+  }
+  return portfolioPromise;
 }
 
 export function notifyChange(symbol: string, from: string, to: string, price: number) {
