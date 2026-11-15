@@ -44,11 +44,27 @@ Tests: `npm test` · Typecheck: `npm run typecheck`
 | `lib/data/` | Yahoo provider, Google fallback, mock provider, cached snapshot |
 | `lib/indicators.ts` | Technical indicators |
 | `lib/signals.ts` | Dividend + swing rule engines |
+| `lib/plan.ts` | Trade plan for BUY calls: ATR stop, R-multiple target, position size, PASS/BLOCK risk checks |
 | `lib/agent.ts` | Claude agent prompt + JSON parsing |
 | `lib/analyze.ts` | Orchestrates snapshot → indicators → rules → agent |
 | `lib/store.ts` | Browser persistence (watchlist, history, settings) |
 | `app/page.tsx` | Watchlist dashboard with auto-follow |
 | `app/ticker/[symbol]/page.tsx` | Ticker agent page: chart, call, factors, fundamentals, news |
+
+## Day-trader skills (Claude Code)
+
+`.claude/skills/trader-*` vendors the 11 skills from [day-trader-skill](https://github.com/Jakeschincariol/day-trader-skill) (MIT, see `.claude/skills/LICENSE-day-trader-skill`). In a Claude Code session in this repo, run them as slash commands:
+
+```
+/trader-scanner → /trader-news → /trader-entry → /trader-exit → /trader-timemachine → /trader-budget → /trader-risk → /trader-broker
+/trader-alerts · /trader-analyst · /trader-pelosi
+```
+
+- Standard-library Python 3.8+, nothing to install. `/trader-pelosi` uses `pdftotext` (poppler) if present.
+- They read and write a `trader/` folder at the repo root (gitignored): `config.json`, `plan.json`, `orders.json`, the broker log.
+- SEC tools need `"sec_user_agent": "Your Name you@example.com"` in `trader/config.json` or the `SEC_USER_AGENT` env var.
+- Nothing places an order on its own; `/trader-broker` is paper by default and requires your explicit yes per order.
+- The skills are independent of the Next.js app; Dodona's UI does not call them.
 
 ## Roadmap ideas
 

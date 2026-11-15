@@ -144,7 +144,7 @@ export function swingSignal(price: number, ind: Indicators): RuleSignal {
 
   const levels: RuleSignal["levels"] = {};
   if (atr14) {
-    levels.stopLoss = round(price - 2 * atr14);
+    levels.stopLoss = Math.floor((price - 2 * atr14) * 100 + 1e-9) / 100; // round down, matches lib/plan.ts
     levels.takeProfit = round(price + 3 * atr14);
   }
   return finalize("swing", factors, levels);

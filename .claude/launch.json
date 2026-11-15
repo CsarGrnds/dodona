@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dodona-dev-mock",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["DODONA_MOCK=1", "npm", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}
