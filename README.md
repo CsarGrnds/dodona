@@ -51,7 +51,18 @@ Tests: `npm test` · Typecheck: `npm run typecheck`
 | `app/page.tsx` | Watchlist dashboard with auto-follow |
 | `app/ticker/[symbol]/page.tsx` | Ticker agent page: chart, call, factors, trade plan, fundamentals, news |
 | `lib/portfolio.ts`, `app/portfolio/page.tsx` | IBKR portfolio model and Portfolio page (holdings, weights, P&L, calls per position) |
+| `lib/setups.ts`, `lib/backtest.ts`, `app/setups/page.tsx` | Swing setups + opening-range breakout (ported from the trader skills) with per-stock track records |
 | `scripts/sync-ibkr.ts` | Turns the IBKR connector's output into `trader/portfolio.json` |
+
+## Setups: swing + intraday
+
+**/setups** scans your IBKR holdings, your watchlist and any tickers you add, using the same rules as the day-trader skills:
+
+- **Swing** (daily bars): `/trader-scanner`'s five setups (20-day breakout, bull flag, reclaimed 20-day average, oversold, oversold bounce) on the last completed close, each with a trade plan sized to your account.
+- **Intraday** (5-minute bars): the opening-range breakout (first close above the first 15 minutes' high), stop at the range midpoint, flat by the close.
+- **Track record per stock**: every past time the setup fired (~3 years daily, ~60 sessions intraday), traded with the same stop and target, as average R, win rate and target/stop/timed-out counts. Swing setups are compared with the same plan entered on any day, which is what a setup has to beat. Samples under 10 trades are flagged.
+
+A track record is the past, not a forecast. No commissions or slippage; a gap through a stop can fill worse than −1R.
 
 ## Portfolio (Interactive Brokers)
 
@@ -81,7 +92,7 @@ Positions update only when you sync; the page flags a sync older than a day.
 ## Roadmap ideas
 
 - Server-side scheduler (Cloud Run job / cron) so agents follow tickers even with the browser closed, plus a DB (Postgres/Firestore) for shared history
-- Backtest the rule engine against history before trusting it
+- Market-wide scan (~5,900 symbols) on the Setups page, like `/trader-scanner daily`
 - Earnings-calendar and ex-dividend triggers; SEC filings in the agent context
 - Direct IBKR Client Portal API so positions refresh without asking Claude to sync
-- Paper-trading ledger to score each agent's calls over time
+- Paper-trading ledger to grade the agents' and setups' live calls over time

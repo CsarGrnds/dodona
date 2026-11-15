@@ -1,4 +1,5 @@
 // Offline synthetic data for development and demos: DODONA_MOCK=1 npm run dev
+import { nyClock, OPEN_MIN, type IntradayBar } from "../setups";
 import type { Bar, Fundamentals, NewsItem, Quote, Snapshot } from "../types";
 
 function seed(symbol: string) {
@@ -64,4 +65,28 @@ export function mockSnapshot(symbol: string): Snapshot {
     { title: `${symbol} reports quarterly results (synthetic)`, publisher: "Mock Wire", link: `https://example.com/${symbol}/1`, publishedAt: new Date().toISOString() },
   ];
   return { quote, bars, fundamentals, news, warnings: ["MOCK DATA — DODONA_MOCK=1 is set"] };
+}
+
+/** Synthetic 5-minute bars: the last 60 weekdays, 78 regular-hours bars each, around the mock price. */
+export function mockIntraday(symbol: string, nowMs = Date.now()): IntradayBar[] {
+  const rnd = seed(`${symbol}:5m`);
+  let p = mockSnapshot(symbol).quote.price;
+  const out: IntradayBar[] = [];
+  const days: number[] = [];
+  for (let d = 1; days.length < 60 && d < 120; d++) {
+    const day = new Date(nowMs - d * 86_400_000);
+    const wd = day.getUTCDay();
+    if (wd !== 0 && wd !== 6) days.unshift(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
+  }
+  for (const dayUtc of days) {
+    // 9:30 New York is 13:30 or 14:30 UTC depending on daylight saving time.
+    const open = [13.5, 14.5].map((h) => dayUtc + h * 3_600_000).find((t) => nyClock(t).minute === OPEN_MIN)!;
+    const trend = (rnd() - 0.5) * 0.004;
+    for (let k = 0; k < 78; k++) {
+      const o = p;
+      p = p * (1 + trend + (rnd() - 0.5) * (k < 6 ? 0.008 : 0.004));
+      out.push({ t: open + k * 300_000, open: o, high: Math.max(o, p) * (1 + rnd() * 0.0015), low: Math.min(o, p) * (1 - rnd() * 0.0015), close: p, volume: Math.round(5e4 + rnd() * 2e5) });
+    }
+  }
+  return out;
 }

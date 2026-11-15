@@ -93,6 +93,7 @@ export default function PortfolioPage() {
         <Brand sub="portfolio · interactive brokers" />
         <div className="row">
           <Link className="btn ghost" href="/">Watchlist</Link>
+          <Link className="btn ghost" href="/setups">Setups</Link>
           {pf && (
             <>
               <button className="btn" onClick={followAll} disabled={rows.every((r) => followed.has(r.ticker))}>

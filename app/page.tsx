@@ -91,6 +91,7 @@ export default function Dashboard() {
       <div className="topbar">
         <Brand />
         <div className="row">
+          <Link className="btn ghost" href="/setups">Setups</Link>
           <Link className="btn ghost" href="/portfolio">Portfolio</Link>
           <SearchBox onPick={add} />
         </div>

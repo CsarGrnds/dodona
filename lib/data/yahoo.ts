@@ -1,4 +1,5 @@
 import YahooFinance from "yahoo-finance2";
+import type { IntradayBar } from "../setups";
 import type { Bar, Fundamentals, NewsItem, Quote } from "../types";
 
 // One shared client. Notices (e.g. "yahooSurvey") are suppressed to keep logs clean.
@@ -40,6 +41,23 @@ export async function yahooBars(symbol: string, days = 420): Promise<Bar[]> {
     .filter((r) => num(r.close) !== undefined)
     .map((r) => ({
       time: isoDate(r.date)!,
+      open: num(r.open) ?? (r.close as number),
+      high: num(r.high) ?? (r.close as number),
+      low: num(r.low) ?? (r.close as number),
+      close: r.close as number,
+      volume: num(r.volume) ?? 0,
+    }));
+}
+
+/** 5-minute bars for the last ~59 days (Yahoo's limit for 5m is 60). Raw: sessions are split in lib/setups.ts. */
+export async function yahooIntraday(symbol: string, days = 59): Promise<IntradayBar[]> {
+  const period1 = new Date(Date.now() - days * 86_400_000);
+  const res = await yf.chart(symbol, { period1, interval: "5m", includePrePost: false });
+  const quotes: Array<Record<string, unknown>> = res?.quotes ?? [];
+  return quotes
+    .filter((r) => num(r.close) !== undefined && r.date)
+    .map((r) => ({
+      t: (r.date instanceof Date ? r.date : new Date(r.date as string)).getTime(),
       open: num(r.open) ?? (r.close as number),
       high: num(r.high) ?? (r.close as number),
       low: num(r.low) ?? (r.close as number),
