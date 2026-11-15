@@ -92,3 +92,7 @@ export const setSettings = (s: Settings) => write(K.settings, s);
 
 export const getPlanSettings = () => normalizePlanSettings(read<Partial<PlanSettings> | null>(K.plan, null));
 export const setPlanSettings = (s: PlanSettings) => write(K.plan, s);
+
+/** Extra tickers to scan on the Setups page (beyond holdings and the watchlist). */
+export const getSetupExtras = () => read<string[]>("dodona.setups.extra.v1", []);
+export const setSetupExtras = (s: string[]) => write("dodona.setups.extra.v1", s);

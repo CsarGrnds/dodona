@@ -60,6 +60,8 @@ export interface PlanInput {
   action: Action;
   price: number;
   atr14?: number;
+  /** A fixed stop (e.g. the opening-range midpoint for an intraday breakout) instead of an ATR multiple. */
+  stop?: { price: number; why: string };
 }
 
 /** A real brokerage account (e.g. synced from IBKR). Overrides the Account $ setting when given. */
@@ -80,13 +82,13 @@ export function buildTradePlan(input: PlanInput, s: PlanSettings = DEFAULT_PLAN_
     return { status: "NONE", reason: `No plan: the call is ${input.action}. Dodona plans long entries on BUY calls only.`, checks: [] };
   }
   if (!(input.price > 0)) return { status: "NONE", reason: "No plan: no valid price.", checks: [] };
-  if (!input.atr14 || !(input.atr14 > 0)) {
+  if (!input.stop && (!input.atr14 || !(input.atr14 > 0))) {
     return { status: "NONE", reason: "No plan: not enough history for a 14-day ATR, so there is no stop to size from.", checks: [] };
   }
 
   const entry = cents(input.price);
   // Stop rounded down to the cent, like trader-exit: never tighter than the rule says.
-  const stop = floorCents(input.price - s.stopAtr * input.atr14);
+  const stop = input.stop ? floorCents(input.stop.price) : floorCents(input.price - s.stopAtr * input.atr14!);
   const risk = cents(entry - stop);
   const target = cents(entry + s.targetR * risk);
   const rewardRisk = risk > 0 ? (target - entry) / risk : 0;
@@ -100,7 +102,7 @@ export function buildTradePlan(input: PlanInput, s: PlanSettings = DEFAULT_PLAN_
   checks.push({
     name: "Stop below entry",
     pass: stop > 0 && stop < entry,
-    detail: `Stop ${usd(stop)} = entry ${usd(entry)} − ${s.stopAtr} × ATR ${input.atr14.toFixed(2)}`,
+    detail: input.stop ? `Stop ${usd(stop)}: ${input.stop.why}` : `Stop ${usd(stop)} = entry ${usd(entry)} − ${s.stopAtr} × ATR ${input.atr14!.toFixed(2)}`,
   });
   const stopPct = risk / entry;
   checks.push({
