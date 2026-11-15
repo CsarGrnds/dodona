@@ -239,7 +239,17 @@ export default function SetupsPage() {
                       <td><Link className="mono" href={`/ticker/${encodeURIComponent(sym)}?strategy=swing`}>{sym}</Link>{findHolding(pf, sym) && <div className="muted small">held</div>}</td>
                       <td className="small"><OrbStatus d={d} /></td>
                       <td className="mono small">{d.orLow !== undefined ? `${fmt.num(d.orLow)}–${fmt.num(d.orHigh)}` : "—"}</td>
-                      <td className="small">{d.hit ? <PlanCell plan={plan} /> : <span className="muted">—</span>}</td>
+                      <td className="small">
+                        {!d.hit ? (
+                          <span className="muted">—</span>
+                        ) : d.session.inProgress ? (
+                          <PlanCell plan={plan} />
+                        ) : (
+                          <div className="past-plan" title="This breakout happened in a finished session; the plan is shown for reference, not to act on.">
+                            <span className="muted">Past session · was:</span> <PlanCell plan={plan} />
+                          </div>
+                        )}
+                      </td>
                       <td className="small">
                         <RecordCell rec={d.backtest.record} />
                         <div className="muted">fired {d.backtest.record.trades} of {d.backtest.sessions} sessions</div>

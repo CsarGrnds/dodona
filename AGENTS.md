@@ -10,5 +10,5 @@ Next.js 15 (App Router) + TypeScript. No CSS framework: styles live in `app/glob
 - Yahoo returns some fields as percentages (fiveYearAvgDividendYield, debtToEquity); normalize to fractions in `lib/data/yahoo.ts`.
 - Commit messages must start with `Claudia - ` (e.g. `Claudia - Add earnings-calendar trigger`).
 - Secrets (API keys, GitHub tokens) live only in `.env` / `.env.local`, which are gitignored. Never hardcode or commit them; document new ones in `.env.example` with an empty value.
-- Before finishing a change: `npm test`, `npm run typecheck`, and `DODONA_MOCK=1 npm run dev` for a visual check.
+- Before finishing a change: `npm test`, `npm run typecheck`, and `npm run dev` for a visual check with real market data (not mock mode).
 - `.claude/skills/trader-*` are vendored day-trader skills (Python, stdlib only). They are not part of the Next.js app; don't import or call them from app code. Their working folder `trader/` is gitignored. Never place a broker order without the user's explicit yes for that exact order.
