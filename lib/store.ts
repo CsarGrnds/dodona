@@ -68,6 +68,8 @@ export const getLastAnalysis = (symbol: string) => read<Analysis | null>(K.last(
 export function recordAnalysis(a: Analysis): CallRecord | undefined {
   const hist = getHistory(a.symbol);
   const prev = hist[hist.length - 1];
+  // Same analysis delivered twice (e.g. React dev double-invoking an effect): don't log it again.
+  if (hist.some((h) => h.generatedAt === a.generatedAt && h.strategy === a.strategy)) return prev;
   const rec: CallRecord = {
     generatedAt: a.generatedAt,
     action: a.final.action,

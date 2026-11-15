@@ -107,3 +107,10 @@ ul.plain { margin: 0; padding-left: 18px; line-height: 1.6; }
 .plan-form span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
 .plan-form input { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-family: var(--mono); min-width: 0; }
 details summary { cursor: pointer; }
+
+/* Portfolio */
+.table-scroll { overflow-x: auto; }
+.grid > * { min-width: 0; }
+.weight-bar { height: 3px; background: var(--panel-2); border-radius: 2px; margin-top: 3px; width: 60px; }
+.weight-bar div { height: 100%; background: var(--accent); border-radius: 2px; }
+pre { background: var(--panel-2); padding: 8px 12px; border-radius: 8px; }

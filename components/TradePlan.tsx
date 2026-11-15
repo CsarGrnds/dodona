@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { fmt } from "@/lib/client";
-import { buildTradePlan, DEFAULT_PLAN_SETTINGS, normalizePlanSettings, type PlanSettings } from "@/lib/plan";
+import { fetchPortfolio, fmt } from "@/lib/client";
+import { buildTradePlan, DEFAULT_PLAN_SETTINGS, normalizePlanSettings, type AccountContext, type PlanSettings } from "@/lib/plan";
+import { findHolding, syncAgeHours, type Portfolio } from "@/lib/portfolio";
 import { getPlanSettings, setPlanSettings } from "@/lib/store";
 import type { Analysis } from "@/lib/types";
 
 type NumKey = Exclude<keyof PlanSettings, "blocked">;
 const FIELDS: Array<{ key: NumKey; label: string; pct?: boolean; step: number }> = [
-  { key: "account", label: "Account $", step: 100 },
+  { key: "account", label: "Account $ (if no IBKR sync)", step: 100 },
   { key: "maxLossPerTrade", label: "Max loss / trade $", step: 10 },
   { key: "maxPositionPct", label: "Max position %", pct: true, step: 1 },
   { key: "cashBuffer", label: "Cash buffer $", step: 100 },
@@ -19,7 +20,16 @@ const FIELDS: Array<{ key: NumKey; label: string; pct?: boolean; step: number }>
 
 export default function TradePlan({ analysis }: { analysis: Analysis }) {
   const [s, setS] = useState<PlanSettings>(DEFAULT_PLAN_SETTINGS);
-  useEffect(() => setS(getPlanSettings()), []);
+  const [pf, setPf] = useState<Portfolio | null>(null);
+  useEffect(() => {
+    setS(getPlanSettings());
+    fetchPortfolio().then(setPf).catch(() => setPf(null));
+  }, []);
+
+  const holding = findHolding(pf, analysis.symbol);
+  const acct: AccountContext | undefined = pf
+    ? { netLiquidation: pf.netLiquidation, cash: pf.cash, heldValue: holding ? holding.shares * analysis.quote.price : 0, heldShares: holding?.shares }
+    : undefined;
 
   const update = (next: PlanSettings) => {
     const clean = normalizePlanSettings(next);
@@ -32,8 +42,10 @@ export default function TradePlan({ analysis }: { analysis: Analysis }) {
       buildTradePlan(
         { symbol: analysis.symbol, action: analysis.final.action, price: analysis.quote.price, atr14: analysis.indicators.atr14 },
         s,
+        acct,
       ),
-    [analysis, s],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [analysis, s, pf],
   );
 
   return (
@@ -43,6 +55,20 @@ export default function TradePlan({ analysis }: { analysis: Analysis }) {
         <span className="spacer" />
         {plan.status !== "NONE" && <span className={`plan-status ${plan.status}`}>{plan.status}</span>}
       </div>
+      {pf && (
+        <p className="muted small" style={{ marginTop: 0 }}>
+          Sized to your IBKR account: {fmt.money(pf.netLiquidation)} net liquidation, {fmt.money(pf.cash)} cash · synced {fmt.ago(pf.syncedAt)}
+          {syncAgeHours(pf) > 24 && <span className="down"> (stale: ask Claude to “sync my IBKR positions”)</span>}
+          {holding ? (
+            <>
+              <br />
+              You hold {holding.shares} {analysis.symbol} at {fmt.money(holding.avgCost)} avg ·{" "}
+              <span className={analysis.quote.price >= holding.avgCost ? "up" : "down"}>{fmt.signedPct(analysis.quote.price / holding.avgCost - 1)}</span> ·{" "}
+              {fmt.pct((holding.shares * analysis.quote.price) / pf.netLiquidation)} of the account
+            </>
+          ) : null}
+        </p>
+      )}
       <p className={plan.status === "BLOCKED" ? "down small" : "small"} style={{ marginTop: 0 }}>{plan.reason}</p>
 
       {plan.status !== "NONE" && (

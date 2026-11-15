@@ -90,7 +90,10 @@ export default function Dashboard() {
     <main className="shell">
       <div className="topbar">
         <Brand />
-        <SearchBox onPick={add} />
+        <div className="row">
+          <Link className="btn ghost" href="/portfolio">Portfolio</Link>
+          <SearchBox onPick={add} />
+        </div>
       </div>
 
       <div className="panel row" style={{ marginBottom: 14 }}>

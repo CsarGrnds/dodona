@@ -62,11 +62,19 @@ export interface PlanInput {
   atr14?: number;
 }
 
+/** A real brokerage account (e.g. synced from IBKR). Overrides the Account $ setting when given. */
+export interface AccountContext {
+  netLiquidation: number;
+  cash: number;
+  heldValue: number; // market value already held in this ticker; counts toward the position cap
+  heldShares?: number;
+}
+
 const cents = (v: number) => Math.round(v * 100) / 100;
 const floorCents = (v: number) => Math.floor(v * 100 + 1e-9) / 100;
 const usd = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function buildTradePlan(input: PlanInput, s: PlanSettings = DEFAULT_PLAN_SETTINGS): TradePlan {
+export function buildTradePlan(input: PlanInput, s: PlanSettings = DEFAULT_PLAN_SETTINGS, acct?: AccountContext): TradePlan {
   const symbol = input.symbol.toUpperCase();
   if (input.action !== "BUY") {
     return { status: "NONE", reason: `No plan: the call is ${input.action}. Dodona plans long entries on BUY calls only.`, checks: [] };
@@ -107,10 +115,13 @@ export function buildTradePlan(input: PlanInput, s: PlanSettings = DEFAULT_PLAN_
   });
 
   // Sizing (trader-budget): the whole shares that fit every limit; say which one decided it.
-  const spendable = Math.max(0, s.account - s.cashBuffer);
+  const accountSize = acct ? acct.netLiquidation : s.account;
+  const spendable = Math.max(0, (acct ? acct.cash : s.account) - s.cashBuffer);
+  const held = acct?.heldValue ?? 0;
+  const capRoom = Math.max(0, accountSize * s.maxPositionPct - held);
   const caps: Array<[SizedBy, number]> = [
     ["max loss", risk > 0 ? Math.floor(s.maxLossPerTrade / risk + 1e-9) : 0],
-    ["position cap", Math.floor((s.account * s.maxPositionPct) / entry + 1e-9)],
+    ["position cap", Math.floor(capRoom / entry + 1e-9)],
     ["cash", Math.floor(spendable / entry + 1e-9)],
   ];
   const [sizedBy, shares] = caps.reduce((a, b) => (b[1] < a[1] ? b : a));
@@ -125,7 +136,10 @@ export function buildTradePlan(input: PlanInput, s: PlanSettings = DEFAULT_PLAN_
   checks.push({
     name: "Fits position cap and cash",
     pass: caps[1][1] >= 1 && caps[2][1] >= 1,
-    detail: `Cap ${usd(s.account * s.maxPositionPct)} (${(s.maxPositionPct * 100).toFixed(0)}% of ${usd(s.account)}), cash after buffer ${usd(spendable)}`,
+    detail:
+      `Cap ${usd(accountSize * s.maxPositionPct)} (${(s.maxPositionPct * 100).toFixed(0)}% of ${usd(accountSize)}${acct ? " net liquidation" : ""})` +
+      (held > 0 ? `, ${usd(held)} already held → ${usd(capRoom)} room` : "") +
+      `, cash after buffer ${usd(spendable)}`,
   });
 
   const plan: TradePlan = {
