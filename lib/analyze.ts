@@ -1,15 +1,20 @@
 import { agentEnabled, runAgent, type PreviousCall } from "./agent";
-import { getSnapshot } from "./data";
+import { getMarketBars, getSnapshot } from "./data";
+import { marketAt, marketSeries, relativeStrength } from "./market";
 import { computeIndicators } from "./indicators";
 import { ruleSignal } from "./signals";
 import type { Analysis, Strategy } from "./types";
 
 export async function analyze(symbol: string, strategy: Strategy, opts: { previous?: PreviousCall; useAgent?: boolean } = {}): Promise<Analysis> {
-  const snap = await getSnapshot(symbol);
+  const [snap, spy] = await Promise.all([getSnapshot(symbol), getMarketBars().catch(() => [])]);
   const price = snap.quote.price;
   const indicators = computeIndicators(snap.bars, price);
-  const rules = ruleSignal(strategy, price, indicators, snap.fundamentals);
   const warnings = [...snap.warnings];
+  const ms = spy.length ? marketSeries(spy) : undefined;
+  const market = ms ? marketAt(ms) : undefined;
+  const rs = ms && snap.bars.length ? relativeStrength(snap.bars, snap.bars.length - 1, ms) : undefined;
+  if (!market) warnings.push("Market benchmark (SPY) unavailable: market and relative-strength factors skipped.");
+  const rules = ruleSignal(strategy, price, indicators, snap.fundamentals, { market, relativeStrength: rs });
 
   let agent: Analysis["agent"];
   let agentError: string | undefined;
@@ -23,6 +28,8 @@ export async function analyze(symbol: string, strategy: Strategy, opts: { previo
         rules,
         news: snap.news,
         previous: opts.previous,
+        market,
+        relativeStrength: rs,
       });
     } catch (e) {
       agentError = e instanceof Error ? e.message : String(e);
@@ -47,5 +54,7 @@ export async function analyze(symbol: string, strategy: Strategy, opts: { previo
     news: snap.news,
     bars: snap.bars.slice(-260),
     warnings,
+    market,
+    relativeStrength: rs,
   };
 }

@@ -1,4 +1,11 @@
+import type { MarketContext } from "./market";
 import type { Action, Factor, Fundamentals, Indicators, RuleSignal, Strategy } from "./types";
+
+/** What the market is doing, for the swing rules. Optional: without it those factors are skipped. */
+export interface MarketInput {
+  market?: MarketContext;
+  relativeStrength?: number; // stock 3-month return minus the market's (fraction)
+}
 
 // Deterministic, explainable scoring. Every factor contributes -2..+2 and says why.
 // The agent (Claude) sees these factors and can agree or override with reasoning.
@@ -100,7 +107,7 @@ export function dividendSignal(price: number, ind: Indicators, f: Fundamentals):
   return finalize("dividend", factors, levels);
 }
 
-export function swingSignal(price: number, ind: Indicators): RuleSignal {
+export function swingSignal(price: number, ind: Indicators, mkt: MarketInput = {}): RuleSignal {
   const factors: Factor[] = [];
   const { sma50, sma200, rsi14, macdHist, macdHistPrev, bbLower, bbUpper, atr14 } = ind;
 
@@ -150,6 +157,26 @@ export function swingSignal(price: number, ind: Indicators): RuleSignal {
     factors.push({ name: "Volume", score: ind.return1m >= 0 ? 1 : -1, detail: `${ind.volumeRatio.toFixed(1)}x 20-day average volume` });
   }
 
+  // 7. Market context: breakouts in a falling market fail more often.
+  if (mkt.market) {
+    const m = mkt.market;
+    factors.push({
+      name: `Market (${m.symbol})`,
+      score: m.trend === "up" ? 1 : m.trend === "down" ? -2 : 0,
+      detail: `${m.trend === "up" ? "Uptrend" : m.trend === "down" ? "Downtrend" : "Mixed"}: ${m.detail}`,
+    });
+  }
+
+  // 8. Relative strength: leaders vs laggards over ~3 months.
+  if (mkt.relativeStrength !== undefined) {
+    const rs = mkt.relativeStrength;
+    factors.push({
+      name: "Relative strength",
+      score: rs > 0.1 ? 2 : rs > 0.03 ? 1 : rs < -0.1 ? -2 : rs < -0.03 ? -1 : 0,
+      detail: `${rs >= 0 ? "+" : ""}${pct(rs)} vs ${mkt.market?.symbol ?? "the market"} over 3 months`,
+    });
+  }
+
   const levels: RuleSignal["levels"] = {};
   if (atr14) {
     levels.stopLoss = Math.floor((price - 2 * atr14) * 100 + 1e-9) / 100; // round down, matches lib/plan.ts
@@ -158,8 +185,8 @@ export function swingSignal(price: number, ind: Indicators): RuleSignal {
   return finalize("swing", factors, levels);
 }
 
-export function ruleSignal(strategy: Strategy, price: number, ind: Indicators, f: Fundamentals): RuleSignal {
-  return strategy === "dividend" ? dividendSignal(price, ind, f) : swingSignal(price, ind);
+export function ruleSignal(strategy: Strategy, price: number, ind: Indicators, f: Fundamentals, mkt: MarketInput = {}): RuleSignal {
+  return strategy === "dividend" ? dividendSignal(price, ind, f) : swingSignal(price, ind, mkt);
 }
 
 const round = (v: number) => Math.round(v * 100) / 100;

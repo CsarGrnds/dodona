@@ -56,6 +56,11 @@ export async function searchSymbols(query: string) {
   return cached(`search:${query.toLowerCase()}`, 60 * MIN, () => yahooSearch(query));
 }
 
+/** Daily bars for the market benchmark (SPY), ~3 years, cached for an hour. */
+export async function getMarketBars(): Promise<Bar[]> {
+  return getDailyHistory("SPY");
+}
+
 /** ~3 years of daily bars for track records. */
 export async function getDailyHistory(symbol: string): Promise<Bar[]> {
   if (MOCK) return mockSnapshot(symbol).bars;

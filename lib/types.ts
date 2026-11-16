@@ -1,3 +1,5 @@
+import type { MarketContext } from "./market";
+
 export type Strategy = "dividend" | "swing";
 export type Action = "BUY" | "SELL" | "HOLD";
 
@@ -127,4 +129,6 @@ export interface Analysis {
   news: NewsItem[];
   bars: Bar[];
   warnings: string[];
+  market?: MarketContext;
+  relativeStrength?: number; // 3-month return minus the market's (fraction)
 }

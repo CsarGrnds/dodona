@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { DEFAULT_ORB_PARAMS, DEFAULT_SWING_PARAMS, orbBacktest, swingBacktest } from "@/lib/backtest";
-import { getDailyHistory, getIntraday, normalizeSymbol } from "@/lib/data";
+import { DEFAULT_ORB_PARAMS, DEFAULT_SWING_PARAMS, orbBacktest, orbContext, swingBacktest, swingContext } from "@/lib/backtest";
+import { getDailyHistory, getIntraday, getMarketBars, normalizeSymbol } from "@/lib/data";
+import { marketAt, marketBefore, marketSeries } from "@/lib/market";
 import { atr } from "@/lib/indicators";
 import { CLOSE_MIN, findSwingSetups, nyClock, orbHit, orMidStop, splitSessions } from "@/lib/setups";
 import type { Bar } from "@/lib/types";
@@ -34,7 +35,7 @@ export async function GET(req: Request) {
   const nowNy = nyClock(now);
   const warnings: string[] = [];
 
-  const [daily, intra] = await Promise.all([
+  const [daily, intra, spy] = await Promise.all([
     getDailyHistory(symbol).catch((e) => {
       warnings.push(`Daily history unavailable: ${e.message}`);
       return [] as Bar[];
@@ -43,7 +44,12 @@ export async function GET(req: Request) {
       warnings.push(`5-minute bars unavailable: ${e.message}`);
       return [];
     }),
+    getMarketBars().catch((e) => {
+      warnings.push(`Market benchmark (SPY) unavailable: ${e.message}`);
+      return [] as Bar[];
+    }),
   ]);
+  const ms = spy.length ? marketSeries(spy) : undefined;
 
   // Swing: only COMPLETE daily bars (drop today's bar while the session is still open).
   let bars = daily;
@@ -59,7 +65,9 @@ export async function GET(req: Request) {
         atr14: Number.isFinite(atr14) ? atr14 : undefined,
         tags: found.tags,
         numbers: found.numbers,
-        backtest: swingBacktest(bars, swingParams),
+        market: ms ? marketAt(ms, bars[bars.length - 1].time) : undefined,
+        context: swingContext(bars, bars.length - 1, ms),
+        backtest: swingBacktest(bars, swingParams, ms),
       }
     : null;
   if (!found && bars.length) warnings.push(`Only ${bars.length} daily bars: need 30 for swing setups.`);
@@ -82,8 +90,10 @@ export async function GET(req: Request) {
       orLow,
       lastPrice: lastBar?.close,
       hit,
+      market: ms ? marketBefore(ms, latest.date) : undefined,
+      context: hit ? orbContext(latest, hit.barIndex, orbParams.orBars, ms, bars) : undefined,
       stop: hit ? orMidStop(hit.orHigh, hit.orLow) : orHigh !== undefined && orLow !== undefined ? orMidStop(orHigh, orLow) : undefined,
-      backtest: orbBacktest(sessions.filter((s) => !(s.date === latest.date && inProgress)), orbParams),
+      backtest: orbBacktest(sessions.filter((s) => !(s.date === latest.date && inProgress)), orbParams, ms, bars),
     };
   }
 
