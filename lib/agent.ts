@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type { ChartLevels } from "./levels";
 import type { MarketContext } from "./market";
 import type { Action, AgentView, Fundamentals, Indicators, NewsItem, Quote, RuleSignal, Strategy } from "./types";
 
@@ -20,6 +21,7 @@ Rules:
 - Strategy "swing" = multi-day to multi-week technical trader: respect trend, momentum and risk levels.
 - If a previous call exists, say whether it still holds and what changed. Don't flip calls on noise.
 - If marketContext is provided, weigh it: long swing setups in a falling market (SPY below its 50- and 200-day averages) deserve lower confidence; stocks stronger than the market (relativeStrength3m > 0) deserve more.
+- If chartLevels is provided, use those support/resistance prices for levels in watchFor: a target just under resistance or a stop just above support is weaker. If fundamentals.nextEarningsDate is within ~2 weeks, name it as a gap risk.
 - Be concise and concrete. This is decision support, not financial advice.
 
 Respond with ONLY a JSON object, no prose around it:
@@ -39,6 +41,7 @@ export async function runAgent(input: {
   previous?: PreviousCall;
   market?: MarketContext;
   relativeStrength?: number;
+  chartLevels?: ChartLevels;
 }): Promise<AgentView> {
   const client = new Anthropic();
   const payload = {
@@ -58,6 +61,7 @@ export async function runAgent(input: {
     previousCall: input.previous ?? null,
     marketContext: input.market ?? null,
     relativeStrength3m: input.relativeStrength ?? null,
+    chartLevels: input.chartLevels ?? null,
   };
 
   const msg = await client.messages.create({

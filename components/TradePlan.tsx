@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import IbkrSync from "@/components/IbkrSync";
 import { fetchPortfolio, fmt } from "@/lib/client";
 import { buildTradePlan, DEFAULT_PLAN_SETTINGS, normalizePlanSettings, type AccountContext, type PlanSettings } from "@/lib/plan";
 import { findHolding, syncAgeHours, type Portfolio } from "@/lib/portfolio";
@@ -18,11 +19,13 @@ const FIELDS: Array<{ key: NumKey; label: string; pct?: boolean; step: number }>
   { key: "minStopPct", label: "Min stop %", pct: true, step: 0.1 },
 ];
 
-export default function TradePlan({ analysis }: { analysis: Analysis }) {
+export default function TradePlan({ analysis, onSettings }: { analysis: Analysis; onSettings?: (s: PlanSettings) => void }) {
   const [s, setS] = useState<PlanSettings>(DEFAULT_PLAN_SETTINGS);
   const [pf, setPf] = useState<Portfolio | null>(null);
   useEffect(() => {
-    setS(getPlanSettings());
+    const saved = getPlanSettings();
+    setS(saved);
+    onSettings?.(saved);
     fetchPortfolio().then(setPf).catch(() => setPf(null));
   }, []);
 
@@ -35,6 +38,7 @@ export default function TradePlan({ analysis }: { analysis: Analysis }) {
     const clean = normalizePlanSettings(next);
     setS(clean);
     setPlanSettings(clean);
+    onSettings?.(clean);
   };
 
   const plan = useMemo(
@@ -58,7 +62,11 @@ export default function TradePlan({ analysis }: { analysis: Analysis }) {
       {pf && (
         <p className="muted small" style={{ marginTop: 0 }}>
           Sized to your IBKR account: {fmt.money(pf.netLiquidation)} net liquidation, {fmt.money(pf.cash)} cash · synced {fmt.ago(pf.syncedAt)}
-          {syncAgeHours(pf) > 24 && <span className="down"> (stale: ask Claude to “sync my IBKR positions”)</span>}
+          {syncAgeHours(pf) > 24 && (
+            <>
+              <span className="down"> (over a day old)</span> <IbkrSync onSynced={setPf} />
+            </>
+          )}
           {holding ? (
             <>
               <br />

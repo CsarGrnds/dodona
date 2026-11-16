@@ -9,12 +9,14 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "sync:ibkr": "tsx scripts/sync-ibkr.ts"
+    "sync:ibkr": "tsx scripts/sync-ibkr.ts",
+    "ibkr": "tsx scripts/ibkr-gateway.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.2.0",
     "lightweight-charts": "^5.2.1",
     "next": "^15.5.28",
+    "pdfjs-dist": "6.4.299",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "yahoo-finance2": "^4.0.5"

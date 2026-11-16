@@ -68,12 +68,15 @@ export async function yahooIntraday(symbol: string, days = 59): Promise<Intraday
 
 export async function yahooFundamentals(symbol: string): Promise<Fundamentals> {
   const s = await yf.quoteSummary(symbol, {
-    modules: ["summaryDetail", "financialData", "defaultKeyStatistics", "assetProfile"],
+    modules: ["summaryDetail", "financialData", "defaultKeyStatistics", "assetProfile", "calendarEvents"],
   });
   const sd = s?.summaryDetail ?? {};
   const fd = s?.financialData ?? {};
   const ks = s?.defaultKeyStatistics ?? {};
   const ap = s?.assetProfile ?? {};
+  const ce = s?.calendarEvents?.earnings ?? {};
+  const today = new Date().toISOString().slice(0, 10);
+  const nextEarnings = ((ce.earningsDate ?? []) as unknown[]).map(isoDate).filter((d): d is string => !!d && d >= today).sort()[0];
   // Yahoo reports fiveYearAvgDividendYield and debtToEquity as percentages (e.g. 2.4, 150).
   const fiveY = num(sd.fiveYearAvgDividendYield);
   const de = num(fd.debtToEquity);
@@ -88,6 +91,8 @@ export async function yahooFundamentals(symbol: string): Promise<Fundamentals> {
     fiveYearAvgDividendYield: fiveY !== undefined ? fiveY / 100 : undefined,
     payoutRatio: num(sd.payoutRatio),
     exDividendDate: isoDate(sd.exDividendDate),
+    nextEarningsDate: nextEarnings,
+    earningsDateEstimated: nextEarnings ? Boolean(ce.isEarningsDateEstimate) : undefined,
     revenueGrowth: num(fd.revenueGrowth),
     earningsGrowth: num(fd.earningsGrowth),
     profitMargin: num(fd.profitMargins),

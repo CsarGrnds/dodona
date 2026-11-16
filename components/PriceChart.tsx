@@ -7,7 +7,14 @@ import type { Bar } from "@/lib/types";
 
 const toTs = (d: string) => (Date.parse(d.length === 10 ? `${d}T00:00:00Z` : d) / 1000) as UTCTimestamp;
 
-export default function PriceChart({ bars, calls, levels }: { bars: Bar[]; calls: CallRecord[]; levels?: Record<string, number | undefined> }) {
+export interface ChartLine {
+  price: number;
+  color: string;
+  title: string;
+  dashed?: boolean;
+}
+
+export default function PriceChart({ bars, calls, levels, lines }: { bars: Bar[]; calls: CallRecord[]; levels?: Record<string, number | undefined>; lines?: ChartLine[] }) {
   const el = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,6 +47,9 @@ export default function PriceChart({ bars, calls, levels }: { bars: Bar[]; calls
       if (v) candles.createPriceLine({ price: v, color: levelColors[k] ?? "#8a93a6", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: labels[k] ?? k });
     }
 
+    // Support / resistance and plan lines.
+    for (const l of lines ?? []) candles.createPriceLine({ price: l.price, color: l.color, lineWidth: 1, lineStyle: l.dashed ? 2 : 0, axisLabelVisible: true, title: l.title });
+
     // Past agent calls as markers (one per day, only when the call changed).
     const first = toTs(bars[0].time);
     const markers: { time: UTCTimestamp; position: "belowBar" | "aboveBar" | "inBar"; color: string; shape: "arrowUp" | "arrowDown" | "circle"; text: string }[] = [];
@@ -62,7 +72,7 @@ export default function PriceChart({ bars, calls, levels }: { bars: Bar[]; calls
 
     chart.timeScale().fitContent();
     return () => chart.remove();
-  }, [bars, calls, levels]);
+  }, [bars, calls, levels, lines]);
 
   return <div ref={el} className="chart" />;
 }
