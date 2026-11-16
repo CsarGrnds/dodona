@@ -27,6 +27,9 @@ Rules:
 Respond with ONLY a JSON object, no prose around it:
 {"action":"BUY"|"SELL"|"HOLD","confidence":0..1,"thesis":"2-4 sentences","risks":["..."],"watchFor":["specific triggers that would change the call, with price levels where possible"]}`;
 
+/** The model the agent calls (ANTHROPIC_MODEL or the default). */
+export const agentModel = () => MODEL;
+
 export function agentEnabled(): boolean {
   return Boolean(process.env.ANTHROPIC_API_KEY);
 }

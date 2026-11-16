@@ -1,0 +1,192 @@
+{
+  "source": "ibkr",
+  "demo": true,
+  "syncedAt": "2026-11-16T03:24:39.918Z",
+  "currency": "USD",
+  "cash": 4200,
+  "netLiquidation": 59884.73,
+  "grossPositionValue": 55684.73,
+  "buyingPower": 8400,
+  "positions": [
+    {
+      "ticker": "AAPL",
+      "shares": 25,
+      "avgCost": 182.4,
+      "marketPrice": 356.27,
+      "marketValue": 8906.75,
+      "unrealizedPnl": 4346.75,
+      "dailyPnl": 34.75,
+      "assetClass": "STK",
+      "lots": [
+        {
+          "id": "AAPL-demo",
+          "date": "2025-06-02",
+          "shares": 25,
+          "cost": 4560
+        }
+      ]
+    },
+    {
+      "ticker": "NVDA",
+      "shares": 40,
+      "avgCost": 118.75,
+      "marketPrice": 162.85,
+      "marketValue": 6514,
+      "unrealizedPnl": 1764,
+      "dailyPnl": -133.6,
+      "assetClass": "STK",
+      "lots": [
+        {
+          "id": "NVDA-demo",
+          "date": "2025-06-02",
+          "shares": 40,
+          "cost": 4750
+        }
+      ]
+    },
+    {
+      "ticker": "MSFT",
+      "shares": 12,
+      "avgCost": 395.1,
+      "marketPrice": 523.88,
+      "marketValue": 6286.56,
+      "unrealizedPnl": 1545.36,
+      "dailyPnl": 10.56,
+      "assetClass": "STK",
+      "lots": [
+        {
+          "id": "MSFT-demo",
+          "date": "2025-06-02",
+          "shares": 12,
+          "cost": 4741.2
+        }
+      ]
+    },
+    {
+      "ticker": "KO",
+      "shares": 60,
+      "avgCost": 58.3,
+      "marketPrice": 99.25,
+      "marketValue": 5955,
+      "unrealizedPnl": 2457,
+      "dailyPnl": 108.6,
+      "assetClass": "STK",
+      "lots": [
+        {
+          "id": "KO-demo",
+          "date": "2025-06-02",
+          "shares": 60,
+          "cost": 3498
+        }
+      ]
+    },
+    {
+      "ticker": "JNJ",
+      "shares": 20,
+      "avgCost": 152.6,
+      "marketPrice": 285.75,
+      "marketValue": 5715,
+      "unrealizedPnl": 2663,
+      "dailyPnl": 44.6,
+      "assetClass": "STK",
+      "lots": [
+        {
+          "id": "JNJ-demo",
+          "date": "2025-06-02",
+          "shares": 20,
+          "cost": 3052
+        }
+      ]
+    },
+    {
+      "ticker": "SCHD",
+      "shares": 150,
+      "avgCost": 26.4,
+      "marketPrice": 36.12,
+      "marketValue": 5418,
+      "unrealizedPnl": 1458,
+      "dailyPnl": 28.5,
+      "assetClass": "STK",
+      "lots": [
+        {
+          "id": "SCHD-demo",
+          "date": "2025-06-02",
+          "shares": 150,
+          "cost": 3960
+        }
+      ]
+    },
+    {
+      "ticker": "XOM",
+      "shares": 30,
+      "avgCost": 112.4,
+      "marketPrice": 170.59,
+      "marketValue": 5117.7,
+      "unrealizedPnl": 1745.7,
+      "dailyPnl": 24.3,
+      "assetClass": "STK",
+      "lots": [
+        {
+          "id": "XOM-demo",
+          "date": "2025-06-02",
+          "shares": 30,
+          "cost": 3372
+        }
+      ]
+    },
+    {
+      "ticker": "AMZN",
+      "shares": 18,
+      "avgCost": 231.5,
+      "marketPrice": 266.66,
+      "marketValue": 4799.88,
+      "unrealizedPnl": 632.88,
+      "dailyPnl": -14.04,
+      "assetClass": "STK",
+      "lots": [
+        {
+          "id": "AMZN-demo",
+          "date": "2025-06-02",
+          "shares": 18,
+          "cost": 4167
+        }
+      ]
+    },
+    {
+      "ticker": "COST",
+      "shares": 4,
+      "avgCost": 835,
+      "marketPrice": 1106.21,
+      "marketValue": 4424.84,
+      "unrealizedPnl": 1084.84,
+      "dailyPnl": 56,
+      "assetClass": "STK",
+      "lots": [
+        {
+          "id": "COST-demo",
+          "date": "2025-06-02",
+          "shares": 4,
+          "cost": 3340
+        }
+      ]
+    },
+    {
+      "ticker": "PG",
+      "shares": 15,
+      "avgCost": 158.2,
+      "marketPrice": 169.8,
+      "marketValue": 2547,
+      "unrealizedPnl": 174,
+      "dailyPnl": 26.55,
+      "assetClass": "STK",
+      "lots": [
+        {
+          "id": "PG-demo",
+          "date": "2025-06-02",
+          "shares": 15,
+          "cost": 2373
+        }
+      ]
+    }
+  ]
+}

@@ -100,3 +100,55 @@ export function tradingDaysBetween(from: string, to: string): number {
   for (let d = addDays(from, 1); d <= to && n < 400; d = addDays(d, 1)) if (tradingDay(d).ok) n++;
   return n;
 }
+
+/** Epoch ms of a New York wall-clock time (date + minutes after midnight), DST-aware. */
+export function nyEpoch(date: string, minute: number): number {
+  const [y, m, d] = date.split("-").map(Number);
+  const want = Date.UTC(y, m - 1, d) + minute * 60_000; // the wall time, as if it were UTC
+  let t = want + 5 * 3_600_000; // New York is UTC−5 or UTC−4
+  for (let i = 0; i < 3; i++) {
+    const c = nyClock(t);
+    const [cy, cm, cd] = c.date.split("-").map(Number);
+    const seen = Date.UTC(cy, cm - 1, cd) + c.minute * 60_000;
+    if (seen === want) break;
+    t += want - seen;
+  }
+  return Math.floor(t / 60_000) * 60_000;
+}
+
+export interface Bell {
+  open: boolean; // the market is open now
+  kind: "open" | "close"; // the next bell
+  at: number; // epoch ms of the next bell
+  date: string; // its New York date
+  weekday: string;
+  label: string; // New York time, e.g. "9:30 AM"
+  early?: string; // early-close reason, when the next close is at 1:00 PM
+  reason: string; // why it's closed now ("weekend", "before the open", …) or "regular session"
+  calendarKnown: boolean;
+}
+
+/** The next opening or closing bell from `nowMs`: today's close while open, else the next open. */
+export function nextBell(nowMs: number): Bell {
+  const st = marketStatus(nowMs);
+  if (st.open) {
+    const s = sessionHours(st.date)!;
+    return { open: true, kind: "close", at: nyEpoch(st.date, s.close), date: st.date, weekday: st.weekday, label: clockLabel(s.close), early: st.earlyClose, reason: st.reason, calendarKnown: st.calendarKnown };
+  }
+  const n = st.nextOpen!;
+  return { open: false, kind: "open", at: nyEpoch(n.date, OPEN_MIN), date: n.date, weekday: n.weekday, label: n.label, reason: st.reason, calendarKnown: st.calendarKnown };
+}
+
+/** "2d 4h 05m", "3h 05m", "42m 08s", "8s". */
+export function countdown(ms: number): string {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(t / 86_400);
+  const h = Math.floor((t % 86_400) / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const sec = t % 60;
+  const p2 = (v: number) => String(v).padStart(2, "0");
+  if (d > 0) return `${d}d ${h}h ${p2(m)}m`;
+  if (h > 0) return `${h}h ${p2(m)}m`;
+  if (m > 0) return `${m}m ${p2(sec)}s`;
+  return `${sec}s`;
+}

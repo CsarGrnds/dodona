@@ -145,7 +145,9 @@ export default function SetupsPage() {
         <Brand sub="setups · swing + intraday" />
         <div className="row">
           <Link className="btn ghost" href="/">Watchlist</Link>
+          <Link className="btn ghost" href="/today">Today</Link>
           <Link className="btn ghost" href="/portfolio">Portfolio</Link>
+          <Link className="btn ghost" href="/status">Status</Link>
           <button className="btn primary" onClick={() => { setRows({}); scan(symbols); }} disabled={running || !symbols.length}>
             {running ? <><Spinner /> {done}/{symbols.length}</> : "Rescan"}
           </button>

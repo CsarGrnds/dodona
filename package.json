@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "sync:ibkr": "tsx scripts/sync-ibkr.ts",
-    "ibkr": "tsx scripts/ibkr-gateway.ts"
+    "ibkr": "tsx scripts/ibkr-gateway.ts",
+    "demo:portfolio": "tsx scripts/demo-portfolio.ts",
+    "screenshots": "bash scripts/screenshots.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.2.0",

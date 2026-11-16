@@ -10,6 +10,9 @@ import { request } from "node:https";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fromIbkr, type Portfolio } from "../portfolio";
+import { parseGatewayOrder, type OpenOrder } from "../prep";
+import { cached } from "../cache";
+import { parsePerformance, type PeriodKey, type Performance } from "../performance";
 import { portfolioPath } from "./portfolio";
 
 export const DEFAULT_GATEWAY = "https://localhost:5001";
@@ -30,12 +33,13 @@ export class GatewayError extends Error {
   }
 }
 
-function call<T>(method: "GET" | "POST", path: string, timeoutMs = 10_000): Promise<T> {
+function call<T>(method: "GET" | "POST", path: string, timeoutMs = 10_000, body?: unknown): Promise<T> {
   const base = gatewayUrl();
+  const payload = body === undefined ? "" : JSON.stringify(body);
   return new Promise((resolve, reject) => {
     const req = request(
       new URL(path, base),
-      { method, rejectUnauthorized: false, headers: { "User-Agent": "Dodona/0.1", Accept: "application/json", ...(method === "POST" ? { "Content-Length": 0 } : {}) }, timeout: timeoutMs },
+      { method, rejectUnauthorized: false, headers: { "User-Agent": "Dodona/0.1", Accept: "application/json", ...(method === "POST" ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) } : {}) }, timeout: timeoutMs },
       (res) => {
         let body = "";
         res.setEncoding("utf8");
@@ -53,7 +57,7 @@ function call<T>(method: "GET" | "POST", path: string, timeoutMs = 10_000): Prom
     );
     req.on("timeout", () => req.destroy(new GatewayError("down", "IBKR gateway timed out")));
     req.on("error", (e) => reject(e instanceof GatewayError ? e : new GatewayError("down", `IBKR gateway not reachable at ${base.origin} (${(e as NodeJS.ErrnoException).code ?? e.message})`)));
-    req.end();
+    req.end(payload);
   });
 }
 
@@ -135,4 +139,39 @@ export async function syncFromGateway(): Promise<Portfolio> {
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, JSON.stringify(pf, null, 2) + "\n");
   return pf;
+}
+
+/**
+ * Live orders (read-only): the stops and limits resting at IBKR. The gateway fills its order
+ * cache lazily, so the first call after a login can come back empty: ask once with force=true,
+ * wait briefly, then read again.
+ */
+export async function openOrders(): Promise<OpenOrder[]> {
+  await call("GET", "/v1/api/iserver/accounts").catch(() => undefined); // required before /iserver calls
+  const read = (q = "") => call<{ orders?: Array<Record<string, unknown>> }>("GET", `/v1/api/iserver/account/orders${q}`);
+  let res = await read("?force=true");
+  if (!res.orders?.length) {
+    await new Promise((r) => setTimeout(r, 1200));
+    res = await read();
+  }
+  const want = process.env.IBKR_ACCOUNT?.trim();
+  return (res.orders ?? [])
+    .filter((o) => !want || !o.acct || o.acct === want)
+    .map(parseGatewayOrder)
+    .filter((o): o is OpenOrder => o !== null);
+}
+
+/**
+ * Daily NAV and time-weighted return for a period, from IBKR's Portfolio Analyst (read-only; the
+ * POST is a query). IBKR updates it once a day, so it is cached for 10 minutes.
+ */
+export async function accountPerformance(period: PeriodKey): Promise<Performance> {
+  const acct = await accountId();
+  return cached(`ibkr-perf:${acct}:${period}`, 10 * 60_000, async () => parsePerformance(await call("POST", "/v1/api/pa/performance", 20_000, { acctIds: [acct], period }), period));
+}
+
+/** The brokerage session's state (read-only): authenticated, connected, or competing with another login. */
+export async function gatewayAuth(): Promise<{ authenticated: boolean; connected: boolean; competing: boolean; serverName?: string }> {
+  const st = await call<{ authenticated?: boolean; connected?: boolean; competing?: boolean; serverInfo?: { serverName?: string } }>("GET", "/v1/api/iserver/auth/status");
+  return { authenticated: !!st.authenticated, connected: !!st.connected, competing: !!st.competing, serverName: st.serverInfo?.serverName };
 }
