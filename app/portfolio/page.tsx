@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import IbkrSync from "@/components/IbkrSync";
 import { Badge, Brand, Disclaimer, Spinner } from "@/components/ui";
 import { fetchPortfolio, fmt, runAnalysis } from "@/lib/client";
 import { CONCENTRATION_WARN, holdings, syncAgeHours, type Portfolio } from "@/lib/portfolio";
@@ -111,7 +112,9 @@ export default function PortfolioPage() {
       {pf === null && !loadErr && (
         <section className="panel">
           <h2>No portfolio synced yet</h2>
-          <p className="small">Dodona reads your positions from the Interactive Brokers connector through Claude. In a Claude Code session in this repo, say:</p>
+          <p className="small">Read your positions straight from Interactive Brokers through the IBKR Client Portal Gateway running on this machine (read-only):</p>
+          <IbkrSync onSynced={setPf} primary label="Sync from IBKR" />
+          <p className="small">Or, in a Claude Code session in this repo, say:</p>
           <pre className="mono small">sync my IBKR positions</pre>
           <p className="muted small">That runs the <span className="mono">/dodona-sync</span> skill: it reads your positions and account summary (read-only) and writes <span className="mono">trader/portfolio.json</span>, which stays on this machine (gitignored). Then reload this page.</p>
         </section>
@@ -131,9 +134,17 @@ export default function PortfolioPage() {
                 <span>Synced from IBKR</span>
                 <span className={syncAgeHours(pf) > 24 ? "down" : ""}>{fmt.ago(pf.syncedAt)}</span>
               </div>
+              {syncAgeHours(pf) <= 24 && (
+                <div>
+                  <span>Refresh</span>
+                  <IbkrSync onSynced={setPf} label="IBKR" />
+                </div>
+              )}
             </div>
             {syncAgeHours(pf) > 24 && (
-              <div className="warn" style={{ marginTop: 10 }}>Positions are over a day old. Ask Claude to “sync my IBKR positions” to refresh.</div>
+              <div className="warn" style={{ marginTop: 10 }}>
+                Positions are over a day old. <IbkrSync onSynced={setPf} />
+              </div>
             )}
           </section>
 

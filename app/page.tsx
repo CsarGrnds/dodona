@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import CongressCard from "@/components/CongressCard";
 import SearchBox from "@/components/SearchBox";
 import { Badge, Brand, Confidence, Disclaimer, Spinner, StrategyToggle } from "@/components/ui";
 import { fmt, notifyChange, runAnalysis } from "@/lib/client";
@@ -177,6 +178,10 @@ export default function Dashboard() {
         })}
       </section>
       {watch.length === 0 && <p className="muted">Search for a ticker above to start following it.</p>}
+
+      <div style={{ marginTop: 14 }}>
+        <CongressCard />
+      </div>
       <Disclaimer />
     </main>
   );

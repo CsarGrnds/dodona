@@ -2,6 +2,7 @@ import { agentEnabled, runAgent, type PreviousCall } from "./agent";
 import { getMarketBars, getSnapshot } from "./data";
 import { marketAt, marketSeries, relativeStrength } from "./market";
 import { computeIndicators } from "./indicators";
+import { supportResistance } from "./levels";
 import { ruleSignal } from "./signals";
 import type { Analysis, Strategy } from "./types";
 
@@ -14,6 +15,7 @@ export async function analyze(symbol: string, strategy: Strategy, opts: { previo
   const market = ms ? marketAt(ms) : undefined;
   const rs = ms && snap.bars.length ? relativeStrength(snap.bars, snap.bars.length - 1, ms) : undefined;
   if (!market) warnings.push("Market benchmark (SPY) unavailable: market and relative-strength factors skipped.");
+  const chartLevels = snap.bars.length > 20 ? supportResistance(snap.bars, price, indicators.atr14) : undefined;
   const rules = ruleSignal(strategy, price, indicators, snap.fundamentals, { market, relativeStrength: rs });
 
   let agent: Analysis["agent"];
@@ -30,6 +32,7 @@ export async function analyze(symbol: string, strategy: Strategy, opts: { previo
         previous: opts.previous,
         market,
         relativeStrength: rs,
+        chartLevels,
       });
     } catch (e) {
       agentError = e instanceof Error ? e.message : String(e);
@@ -56,5 +59,6 @@ export async function analyze(symbol: string, strategy: Strategy, opts: { previo
     warnings,
     market,
     relativeStrength: rs,
+    chartLevels,
   };
 }

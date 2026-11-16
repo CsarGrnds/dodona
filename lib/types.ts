@@ -1,3 +1,4 @@
+import type { ChartLevels } from "./levels";
 import type { MarketContext } from "./market";
 
 export type Strategy = "dividend" | "swing";
@@ -36,6 +37,8 @@ export interface Fundamentals {
   fiveYearAvgDividendYield?: number; // fraction
   payoutRatio?: number; // fraction
   exDividendDate?: string;
+  nextEarningsDate?: string; // YYYY-MM-DD, from Yahoo's calendar
+  earningsDateEstimated?: boolean;
   revenueGrowth?: number; // fraction
   earningsGrowth?: number; // fraction
   profitMargin?: number;
@@ -131,4 +134,5 @@ export interface Analysis {
   warnings: string[];
   market?: MarketContext;
   relativeStrength?: number; // 3-month return minus the market's (fraction)
+  chartLevels?: ChartLevels; // support and resistance from the daily chart
 }

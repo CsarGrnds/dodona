@@ -96,3 +96,7 @@ export const setPlanSettings = (s: PlanSettings) => write(K.plan, s);
 /** Extra tickers to scan on the Setups page (beyond holdings and the watchlist). */
 export const getSetupExtras = () => read<string[]>("dodona.setups.extra.v1", []);
 export const setSetupExtras = (s: string[]) => write("dodona.setups.extra.v1", s);
+
+// Congress members tracked on the dashboard's Congress trades card (last name or "First Last").
+export const getCongressMembers = () => read<string[]>("dodona.congress.members.v1", ["pelosi"]);
+export const setCongressMembers = (m: string[]) => write("dodona.congress.members.v1", m);

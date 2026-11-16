@@ -1,12 +1,24 @@
 "use client";
 import { useParams, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
-import PriceChart from "@/components/PriceChart";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import PriceChart, { type ChartLine } from "@/components/PriceChart";
+import type { SetupsResult } from "@/components/SetupBits";
+import { ChartAnalysis, Checklist, EarningsPanel, MarketClock, NewsPanel, SetupsPanel, TimeMachinePanel } from "@/components/TickerPanels";
 import TradePlan from "@/components/TradePlan";
 import { Badge, Brand, Confidence, Disclaimer, Spinner, StrategyToggle } from "@/components/ui";
-import { fmt, runAnalysis } from "@/lib/client";
+import { DEFAULT_SWING_PARAMS } from "@/lib/backtest";
+import { buildChecklist } from "@/lib/checklist";
+import { fetchPortfolio, fmt, runAnalysis } from "@/lib/client";
+import { marketStatus } from "@/lib/clock";
+import { MIN_TOUCHES, type Level } from "@/lib/levels";
+import type { ResearchResult } from "@/lib/news";
+import { buildTradePlan, DEFAULT_PLAN_SETTINGS, type AccountContext, type PlanSettings } from "@/lib/plan";
+import { findHolding, type Portfolio } from "@/lib/portfolio";
 import { getHistory, getSettings, getWatchlist, setWatchlist, type CallRecord } from "@/lib/store";
+import { dailyPool, simulate } from "@/lib/timemachine";
 import type { Analysis, Strategy } from "@/lib/types";
+
+const HOLD_DAYS = DEFAULT_SWING_PARAMS.maxHoldDays;
 
 export default function Page() {
   return (
@@ -59,9 +71,87 @@ function TickerPage() {
     setFollowing(true);
   };
 
+  // Everything else Dodona knows about this stock, loaded alongside the agent call.
+  const [settings, setSettings] = useState<PlanSettings>();
+  const [pf, setPf] = useState<Portfolio | null>(null);
+  const [setups, setSetups] = useState<{ data?: SetupsResult; error?: string }>({});
+  const [research, setResearch] = useState<ResearchResult>();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    fetchPortfolio().then(setPf).catch(() => setPf(null));
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    setResearch(undefined);
+    fetch(`/api/research?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setResearch(d as ResearchResult))
+      .catch((e) => setResearch({ symbol, sec: "error", filings: [], earnings: null, warnings: [String(e)] }));
+  }, [symbol]);
+  const stopAtr = settings?.stopAtr;
+  const targetR = settings?.targetR;
+  useEffect(() => {
+    if (stopAtr === undefined || targetR === undefined) return;
+    let live = true;
+    setSetups({});
+    fetch(`/api/setups?symbol=${encodeURIComponent(symbol)}&stopAtr=${stopAtr}&targetR=${targetR}&maxHold=${HOLD_DAYS}`, { cache: "no-store" })
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error ?? `Setups failed (${r.status})`);
+        if (live) setSetups({ data: d as SetupsResult });
+      })
+      .catch((e) => live && setSetups({ error: e instanceof Error ? e.message : String(e) }));
+    return () => {
+      live = false;
+    };
+  }, [symbol, stopAtr, targetR]);
+
+  const status = useMemo(() => marketStatus(now), [now]);
+  const holding = findHolding(pf, symbol);
+  // The long plan at today's price, built even when the call isn't BUY, so the levels, the
+  // Time Machine and the risk check answer "what if I bought here?".
+  const longPlan = useMemo(() => {
+    if (!a) return undefined;
+    const acct: AccountContext | undefined = pf ? { netLiquidation: pf.netLiquidation, cash: pf.cash, heldValue: holding ? holding.shares * a.quote.price : 0, heldShares: holding?.shares } : undefined;
+    return buildTradePlan({ symbol, action: "BUY", price: a.quote.price, atr14: a.indicators.atr14 }, settings ?? DEFAULT_PLAN_SETTINGS, acct);
+  }, [a, settings, pf, holding, symbol]);
+  const tm = useMemo(() => {
+    if (!a || !longPlan || longPlan.entry === undefined || longPlan.stop === undefined || longPlan.target === undefined) return null;
+    return simulate(dailyPool(a.bars), { entry: longPlan.entry, stop: longPlan.stop, target: longPlan.target }, HOLD_DAYS);
+  }, [a, longPlan]);
+  const checks = useMemo(() => {
+    if (!a) return [];
+    return buildChecklist({
+      today: status.date,
+      quote: a.quote,
+      indicators: a.indicators,
+      market: a.market,
+      relativeStrength: a.relativeStrength,
+      levels: a.chartLevels,
+      swing: setups.data?.swing ?? undefined,
+      plan: longPlan,
+      timeMachine: tm,
+      nextEarningsDate: a.fundamentals.nextEarningsDate,
+      earningsEstimated: a.fundamentals.earningsDateEstimated,
+      holdDays: HOLD_DAYS,
+      news: a.news,
+      filings: research ? (research.sec === "no-user-agent" ? null : research.filings) : undefined,
+    });
+  }, [a, setups.data, longPlan, tm, research, status.date]);
+  const loading = [!setups.data && !setups.error && "setups", !research && "SEC filings"].filter(Boolean) as string[];
+  const lines = useMemo<ChartLine[]>(() => {
+    const out: ChartLine[] = [];
+    const strong = (l: Level) => l.touches >= MIN_TOUCHES;
+    for (const l of (a?.chartLevels?.supports ?? []).filter(strong).slice(0, 2)) out.push({ price: l.price, color: "#2fbf71", title: `S ${l.touches}×`, dashed: true });
+    for (const l of (a?.chartLevels?.resistances ?? []).filter(strong).slice(0, 2)) out.push({ price: l.price, color: "#e5534b", title: `R ${l.touches}×`, dashed: true });
+    if (longPlan?.stop !== undefined) out.push({ price: longPlan.stop, color: "#e5534b", title: "Plan stop" });
+    if (longPlan?.target !== undefined) out.push({ price: longPlan.target, color: "#2fbf71", title: "Plan target" });
+    return out;
+  }, [a, longPlan]);
+
   const q = a?.quote;
   const f = a?.fundamentals ?? {};
-  const ind = a?.indicators ?? {};
   const callsForStrategy = history.filter((h) => h.strategy === strategy);
 
   return (
@@ -79,6 +169,7 @@ function TickerPage() {
         <h2 className="mono" style={{ fontSize: 28, margin: 0 }}>{symbol}</h2>
         <span className="muted">{q?.name}</span>
         <span className="muted small">{q?.exchange} {f.sector ? `· ${f.sector}` : ""} {f.industry ? `· ${f.industry}` : ""}</span>
+        <MarketClock st={status} />
         <span className="spacer" />
         {q && (
           <>
@@ -99,8 +190,8 @@ function TickerPage() {
         <div className="grid" style={{ gap: 14 }}>
           <div className="grid two">
             <section className="panel">
-              <h2>Price · 50d (gold) · 200d (blue) · past calls</h2>
-              <PriceChart bars={a.bars} calls={callsForStrategy} levels={a.rules.levels} />
+              <h2>Price · 50d (gold) · 200d (blue) · support / resistance (dashed) · plan stop / target</h2>
+              <PriceChart bars={a.bars} calls={callsForStrategy} levels={strategy === "dividend" ? a.rules.levels : undefined} lines={lines} />
             </section>
 
             <section className="panel">
@@ -146,12 +237,23 @@ function TickerPage() {
             </section>
           </div>
 
-          <TradePlan analysis={a} />
+          <Checklist checks={checks} loading={loading} />
 
           <div className="grid two">
+            <SetupsPanel d={setups.data} error={setups.error} />
+            <ChartAnalysis levels={a.chartLevels} ind={a.indicators} price={a.quote.price} />
+          </div>
+
+          <div className="grid halves">
+            <TradePlan analysis={a} onSettings={setSettings} />
+            <TimeMachinePanel tm={tm} hypothetical={a.final.action !== "BUY"} />
+          </div>
+
+          <div className="grid halves">
+            <NewsPanel news={a.news} filings={research?.filings} sec={research?.sec} changePct={a.quote.changePct} />
             <section className="panel">
               <h2>Rule engine · score {a.rules.score} → {a.rules.action}</h2>
-              <table>
+              <div className="table-scroll fit"><table>
                 <thead><tr><th>Factor</th><th>Score</th><th>Evidence</th></tr></thead>
                 <tbody>
                   {a.rules.factors.map((x) => (
@@ -162,11 +264,39 @@ function TickerPage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
+            </section>
+          </div>
+
+          <EarningsPanel r={research ? research.earnings : undefined} sec={research?.sec} nextDate={f.nextEarningsDate} estimated={f.earningsDateEstimated} />
+          {research?.warnings.map((w) => <div key={w} className="warn">{w}</div>)}
+
+          <div className="grid two">
+            <section className="panel">
+              <h2>Fundamentals</h2>
+              <div className="kv">
+                <div><span>Market cap</span><span>{fmt.big(f.marketCap)}</span></div>
+                <div><span>Fwd P/E</span><span>{fmt.num(f.forwardPE, 1)}</span></div>
+                <div><span>Trailing P/E</span><span>{fmt.num(f.trailingPE, 1)}</span></div>
+                <div><span>PEG</span><span>{fmt.num(f.pegRatio)}</span></div>
+                <div><span>Div yield</span><span>{fmt.pct(f.dividendYield, 2)}</span></div>
+                <div><span>5y avg yield</span><span>{fmt.pct(f.fiveYearAvgDividendYield, 2)}</span></div>
+                <div><span>Div rate</span><span>{fmt.money(f.dividendRate)}</span></div>
+                <div><span>Payout</span><span>{fmt.pct(f.payoutRatio)}</span></div>
+                <div><span>Ex-div</span><span>{f.exDividendDate ?? "—"}</span></div>
+                <div><span>Next earnings</span><span>{f.nextEarningsDate ?? "—"}</span></div>
+                <div><span>Rev growth</span><span>{fmt.pct(f.revenueGrowth)}</span></div>
+                <div><span>EPS growth</span><span>{fmt.pct(f.earningsGrowth)}</span></div>
+                <div><span>Margin</span><span>{fmt.pct(f.profitMargin)}</span></div>
+                <div><span>Debt/Equity</span><span>{fmt.num(f.debtToEquity)}</span></div>
+                <div><span>Beta</span><span>{fmt.num(f.beta)}</span></div>
+                <div><span>Analyst target</span><span>{fmt.money(f.targetMeanPrice)}</span></div>
+                <div><span>Consensus</span><span>{f.recommendationKey ?? "—"}</span></div>
+              </div>
             </section>
             <section className="panel">
               <h2>Call history ({callsForStrategy.length})</h2>
-              <table>
+              <div className="table-scroll fit"><table>
                 <thead><tr><th>When</th><th>Call</th><th>Price</th><th>Since</th></tr></thead>
                 <tbody>
                   {[...callsForStrategy].reverse().slice(0, 12).map((h) => (
@@ -178,65 +308,9 @@ function TickerPage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </section>
           </div>
-
-          <section className="panel">
-            <h2>Fundamentals</h2>
-            <div className="kv">
-              <div><span>Market cap</span><span>{fmt.big(f.marketCap)}</span></div>
-              <div><span>Fwd P/E</span><span>{fmt.num(f.forwardPE, 1)}</span></div>
-              <div><span>Trailing P/E</span><span>{fmt.num(f.trailingPE, 1)}</span></div>
-              <div><span>PEG</span><span>{fmt.num(f.pegRatio)}</span></div>
-              <div><span>Div yield</span><span>{fmt.pct(f.dividendYield, 2)}</span></div>
-              <div><span>5y avg yield</span><span>{fmt.pct(f.fiveYearAvgDividendYield, 2)}</span></div>
-              <div><span>Div rate</span><span>{fmt.money(f.dividendRate)}</span></div>
-              <div><span>Payout</span><span>{fmt.pct(f.payoutRatio)}</span></div>
-              <div><span>Ex-div</span><span>{f.exDividendDate ?? "—"}</span></div>
-              <div><span>Rev growth</span><span>{fmt.pct(f.revenueGrowth)}</span></div>
-              <div><span>EPS growth</span><span>{fmt.pct(f.earningsGrowth)}</span></div>
-              <div><span>Margin</span><span>{fmt.pct(f.profitMargin)}</span></div>
-              <div><span>Debt/Equity</span><span>{fmt.num(f.debtToEquity)}</span></div>
-              <div><span>Beta</span><span>{fmt.num(f.beta)}</span></div>
-              <div><span>Analyst target</span><span>{fmt.money(f.targetMeanPrice)}</span></div>
-              <div><span>Consensus</span><span>{f.recommendationKey ?? "—"}</span></div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>Technicals</h2>
-            <div className="kv">
-              <div><span>RSI 14</span><span>{fmt.num(ind.rsi14, 1)}</span></div>
-              <div><span>SMA 20</span><span>{fmt.num(ind.sma20)}</span></div>
-              <div><span>SMA 50</span><span>{fmt.num(ind.sma50)}</span></div>
-              <div><span>SMA 200</span><span>{fmt.num(ind.sma200)}</span></div>
-              <div><span>MACD hist</span><span>{fmt.num(ind.macdHist, 3)}</span></div>
-              <div><span>ATR 14</span><span>{fmt.num(ind.atr14)}</span></div>
-              <div><span>52w high</span><span>{fmt.num(ind.high52w)}</span></div>
-              <div><span>52w low</span><span>{fmt.num(ind.low52w)}</span></div>
-              <div><span>From high</span><span>{fmt.pct(ind.drawdownFromHigh)}</span></div>
-              <div><span>1m</span><span>{fmt.signedPct(ind.return1m)}</span></div>
-              <div><span>3m</span><span>{fmt.signedPct(ind.return3m)}</span></div>
-              <div><span>1y</span><span>{fmt.signedPct(ind.return1y)}</span></div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>News the agent read</h2>
-            {a.news.length === 0 ? (
-              <p className="muted small">No recent headlines.</p>
-            ) : (
-              <ul className="plain">
-                {a.news.map((n) => (
-                  <li key={n.link}>
-                    <a href={n.link} target="_blank" rel="noreferrer">{n.title}</a>{" "}
-                    <span className="muted small">{n.publisher} · {fmt.ago(n.publishedAt)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
         </div>
       )}
       <Disclaimer />

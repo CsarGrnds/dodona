@@ -11,6 +11,10 @@ description: >-
 
 # Dodona IBKR sync
 
+If the IBKR Client Portal Gateway is set up (`npm run -s ibkr -- status`
+says READY or LOGIN NEEDED), prefer `/ibkr-gateway`: it reads IBKR directly.
+This skill is the route through Claude's IBKR connector.
+
 Read-only. Never call any order, alert, watchlist or other write tool on the
 broker connector from this skill.
 
