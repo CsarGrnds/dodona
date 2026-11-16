@@ -35,6 +35,7 @@ export interface Portfolio {
   grossPositionValue: number;
   buyingPower?: number;
   positions: Position[];
+  demo?: boolean; // a fictional portfolio (docs/demo/portfolio.json), for screenshots and demos
 }
 
 const num = (v: unknown): number | undefined => {
@@ -129,6 +130,7 @@ export function parsePortfolio(raw: unknown): Portfolio | null {
     grossPositionValue: gross,
     buyingPower: num(o.buyingPower),
     positions,
+    ...(o.demo === true ? { demo: true } : {}),
   };
 }
 

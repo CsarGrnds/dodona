@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import CongressCard from "@/components/CongressCard";
+import PortfolioPulse from "@/components/PortfolioPulse";
 import SearchBox from "@/components/SearchBox";
 import { Badge, Brand, Confidence, Disclaimer, Spinner, StrategyToggle } from "@/components/ui";
 import { fmt, notifyChange, runAnalysis } from "@/lib/client";
@@ -92,11 +93,15 @@ export default function Dashboard() {
       <div className="topbar">
         <Brand />
         <div className="row">
+          <Link className="btn ghost" href="/today">Today</Link>
           <Link className="btn ghost" href="/setups">Setups</Link>
           <Link className="btn ghost" href="/portfolio">Portfolio</Link>
+          <Link className="btn ghost" href="/status">Status</Link>
           <SearchBox onPick={add} />
         </div>
       </div>
+
+      <PortfolioPulse />
 
       <div className="panel row" style={{ marginBottom: 14 }}>
         <span className="muted small">Following {watch.length}</span>

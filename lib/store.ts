@@ -2,6 +2,7 @@
 // Browser-side persistence: watchlist, per-ticker call history, settings.
 // localStorage keeps v1 simple and private to this browser. Swap for a DB later.
 import { normalizePlanSettings, type PlanSettings } from "./plan";
+import { normalizeRules, type TradingRules } from "./prep";
 import type { Action, Analysis, Strategy } from "./types";
 
 export interface WatchItem {
@@ -100,3 +101,7 @@ export const setSetupExtras = (s: string[]) => write("dodona.setups.extra.v1", s
 // Congress members tracked on the dashboard's Congress trades card (last name or "First Last").
 export const getCongressMembers = () => read<string[]>("dodona.congress.members.v1", ["pelosi"]);
 export const setCongressMembers = (m: string[]) => write("dodona.congress.members.v1", m);
+
+/** The user's own trading rules (Today page). Default: never sell at a loss. */
+export const getRules = () => normalizeRules(read<Partial<TradingRules> | null>("dodona.rules.v1", null));
+export const setRules = (r: TradingRules) => write("dodona.rules.v1", r);

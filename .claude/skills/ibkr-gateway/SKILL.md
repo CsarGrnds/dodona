@@ -22,8 +22,9 @@ with `IBKR_GATEWAY_DIR`). It serves IBKR's Web API on **https://localhost:5001**
 
 ## Rules
 
-- **Read-only.** This skill and `npm run ibkr` only read accounts, positions and
-  the summary. Never call order, trade, alert or account-setting endpoints. An
+- **Read-only.** This skill, `npm run ibkr` and Dodona's Today page only read
+  accounts, positions, the summary, open orders (to compare your stops) and
+  account performance (the main screen's chart). Never call order, trade, alert or account-setting endpoints. An
   order needs the user's explicit yes for that exact order (see `AGENTS.md`).
 - **Credentials are the user's.** Never type, ask for, store or log the IBKR
   username, password or two-factor codes. The user logs in on the gateway's
