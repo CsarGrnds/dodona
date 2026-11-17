@@ -2,7 +2,7 @@
 name: trade-entry
 description: Trade team entry timer. Runs /trader-entry on one candidate to see if its breakout has triggered on a completed bar (opening range or a given level), and writes trader/entry.json in the paper workspace. Use from /trade-desk, one symbol at a time.
 tools: Bash, Read, Glob, Grep
-model: inherit
+model: haiku
 ---
 
 You are the entry timer on a paper day-trading team. One symbol per call.

@@ -2,7 +2,30 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { newDesk, openPosition } from "../lib/desk";
 import { acceptTeamOrder, brokerState, orderFingerprint, paperPortfolio } from "../lib/data/paper";
-import { projectSlug, stepsFrom } from "../lib/data/transcripts";
+import { projectSlug, stepsFrom, teamModels, usageFrom } from "../lib/data/transcripts";
+
+test("each specialist runs on a model sized to its job", async () => {
+  const m = await teamModels();
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(m).sort()),
+    { "trade-analyst": "sonnet", "trade-budget": "haiku", "trade-entry": "haiku", "trade-exit": "haiku", "trade-news": "sonnet", "trade-risk": "haiku", "trade-scanner": "haiku", "trade-timemachine": "haiku" },
+  );
+});
+
+test("usage: tokens and API cost per agent, one response counted once", () => {
+  const msg = (id: string, model: string, usage: Record<string, unknown>) => ({ timestamp: "2026-11-16T15:00:00Z", message: { role: "assistant", id, model, usage, content: [] } });
+  const opus = usageFrom([
+    msg("m1", "claude-opus-5-5", { input_tokens: 1000, output_tokens: 1000, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 2000, cache_creation: { ephemeral_1h_input_tokens: 2000 } }),
+    msg("m1", "claude-opus-5-5", { input_tokens: 1000, output_tokens: 1000, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 2000, cache_creation: { ephemeral_1h_input_tokens: 2000 } }),
+  ])!;
+  // 1000×$4 + 10,000×$0.40 + 2000×$8 (1-hour write) + 1000×$20, per million
+  assert.equal(opus.calls, 1);
+  assert.equal(opus.costUsd, 0.044);
+  const haiku = usageFrom([msg("h1", "claude-haiku-5-5", { input_tokens: 1000, output_tokens: 1000, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 2000, cache_creation: { ephemeral_1h_input_tokens: 2000 } })])!;
+  assert.equal(haiku.costUsd, 0.0011);
+  assert.equal(usageFrom([msg("x", "claude-unknown-9", { input_tokens: 5, output_tokens: 5 })])!.costUsd, undefined);
+  assert.equal(usageFrom([]), undefined);
+});
 
 const ORDER = {
   symbol: "TSLA", side: "buy", qty: "8", type: "market", time_in_force: "day", order_class: "bracket",

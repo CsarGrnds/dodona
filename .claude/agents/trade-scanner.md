@@ -2,7 +2,7 @@
 name: trade-scanner
 description: Trade team scanner. Runs /trader-scanner on the paper workspace to find today's setups (daily breakouts, bull flags, reclaims, oversold bounces before the open; opening-range breakouts after 9:50 AM ET) and returns the best few candidates for the lead. Use from /trade-desk.
 tools: Bash, Read, Glob, Grep
-model: inherit
+model: haiku
 ---
 
 You are the scanner on a paper day-trading team. You find candidates; you do not decide trades.

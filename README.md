@@ -247,16 +247,18 @@ Dodona's own skills, in the same folder:
 
 `/trade-desk` makes Claude Code the **lead trader** of a paper day-trading team. It sends the work to eight specialist subagents (`.claude/agents/trade-*.md`), each using one real skill, and books on Dodona's paper desk only what trader-risk passes:
 
-| Subagent | Skill | Job |
-|---|---|---|
-| `trade-scanner` | `/trader-scanner` | Today's setups, at most 5 candidates |
-| `trade-news` | `/trader-news` | CLEAR / CAUTION / AVOID per ticker |
-| `trade-entry` | `/trader-entry` | Has the breakout triggered on a completed bar? |
-| `trade-exit` | `/trader-exit` | Stop, target, R, reward:risk |
-| `trade-timemachine` | `/trader-timemachine` | 10,000 replays of the rest of the day plus every past session: odds, average R, verdict |
-| `trade-analyst` | `/trader-analyst` | Earnings trend (needs `SEC_USER_AGENT`) |
-| `trade-budget` | `/trader-budget` | Shares inside your rules, one bracket order |
-| `trade-risk` | `/trader-risk` | PASS or BLOCK: the last word |
+| Subagent | Skill | Model | Job |
+|---|---|---|---|
+| `trade-scanner` | `/trader-scanner` | Haiku | Today's setups, at most 5 candidates |
+| `trade-news` | `/trader-news` | Sonnet | CLEAR / CAUTION / AVOID per ticker |
+| `trade-entry` | `/trader-entry` | Haiku | Has the breakout triggered on a completed bar? |
+| `trade-exit` | `/trader-exit` | Haiku | Stop, target, R, reward:risk |
+| `trade-timemachine` | `/trader-timemachine` | Haiku | 10,000 replays of the rest of the day plus every past session: odds, average R, verdict |
+| `trade-analyst` | `/trader-analyst` | Sonnet | Earnings trend (needs `SEC_USER_AGENT`) |
+| `trade-budget` | `/trader-budget` | Haiku | Shares inside your rules, one bracket order |
+| `trade-risk` | `/trader-risk` | Haiku | PASS or BLOCK: the last word |
+
+**Each agent on the right model.** The lead runs on your Claude Code session's model (Opus) and makes every call. The six specialists that run a script and report its numbers use Haiku; News and Analyst, which judge headlines and earnings, use Sonnet. Change one with the `model:` line in its `.claude/agents/trade-*.md`. The Desk page shows each agent's model, tokens and estimated cost per session.
 
 How it stays paper and safe:
 
@@ -274,7 +276,7 @@ How it stays paper and safe:
 
 Claude Code's transcript format isn't documented, so the reader skips anything it doesn't recognize. The logged verdicts still show if the format changes.
 
-Run it all day with `/loop 15m /trade-desk` between 9:45 AM and 3:30 PM New York time. It uses your Claude plan's usage. Running the same team through the Claude Agent SDK instead would be billed per token: at Opus 5.5 prices, a cycle is roughly $0.60–1.00, so about $15–25 for a day at one cycle every 15 minutes.
+Run it all day with `/loop 15m /trade-desk` between 9:45 AM and 3:30 PM New York time. It uses your Claude plan's usage. Running the same team through the Claude Agent SDK instead would be billed per token. With every agent on Opus 5.5 a cycle was roughly $0.60–1.00 (about $15–25 a day at one cycle every 15 minutes); with the specialists on Haiku and Sonnet most of a cycle's tokens cost a fraction of that, and the lead's Opus turns are the bulk of it. The team view's cost estimate per session shows the real split.
 
 ## Roadmap ideas
 

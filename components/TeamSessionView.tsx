@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Spinner } from "@/components/ui";
 import type { AgentSession } from "@/lib/desk";
-import type { TeamStep, TeamTranscript } from "@/lib/data/transcripts";
+import type { AgentUsage, TeamStep, TeamTranscript } from "@/lib/data/transcripts";
 
 export const TEAM_MODEL = "Claude Code trade team";
 
@@ -21,6 +21,17 @@ const ROLE: Record<string, { label: string; icon: string; skill?: string }> = {
 };
 const roleOf = (a: string) => ROLE[a] ?? ROLE[`trade-${a}`] ?? { label: a, icon: "•" };
 const keyOf = (a: string) => (ROLE[a] ? a : ROLE[`trade-${a}`] ? `trade-${a}` : a);
+/** "claude-haiku-5-5" / "haiku" → "Haiku 5.5" / "Haiku"; "inherit" → the session's model. */
+const modelName = (m?: string) => {
+  if (!m) return undefined;
+  if (m === "inherit") return "session model";
+  const x = m.replace(/^claude-/, "").match(/^([a-z]+)(?:-(\d+)-(\d+))?/);
+  return x ? `${x[1][0].toUpperCase()}${x[1].slice(1)}${x[2] ? ` ${x[2]}.${x[3]}` : ""}` : m;
+};
+const usd = (n: number) => (n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
+const tok = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n));
+const usageTip = (u: AgentUsage) =>
+  `${u.calls} model calls · ${tok(u.input + u.cacheRead + u.cacheWrite)} input (${tok(u.cacheRead)} cached) · ${tok(u.output)} output${u.costUsd !== undefined ? ` · about ${usd(u.costUsd)} at API prices` : ""}`;
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
 
 interface Row extends TeamStep {
@@ -29,6 +40,7 @@ interface Row extends TeamStep {
 
 export function TeamSessionView({ session, onLive }: { session: AgentSession; onLive?: () => void }) {
   const [tx, setTx] = useState<TeamTranscript>();
+  const [models, setModels] = useState<Record<string, string>>({});
   const [sess, setSess] = useState(session);
   const [only, setOnly] = useState<string>();
   const [raw, setRaw] = useState(false);
@@ -43,6 +55,7 @@ export function TeamSessionView({ session, onLive }: { session: AgentSession; on
         const j = await r.json();
         if (!live) return;
         if (j.transcript) setTx(j.transcript);
+        if (j.models) setModels(j.models);
         if (j.session) {
           setSess(j.session);
           if (j.session.status !== "running" && session.status === "running") onLive?.();
@@ -72,24 +85,42 @@ export function TeamSessionView({ session, onLive }: { session: AgentSession; on
     return m;
   }, [sess.steps, tx]);
 
+  const usage = useMemo(() => new Map((tx?.agents ?? []).filter((a) => a.usage).map((a) => [keyOf(a.agent), a.usage!])), [tx]);
+
   return (
     <div className="as">
       <div className="as-head">
         <span className={`pill ${running ? "act" : sess.status === "done" ? "ok" : "bad"}`}>{running ? <><Spinner /> Live</> : sess.status === "done" ? "Done" : "Stopped"}</span>
         <span className="small">{sess.trigger}</span>
         <span className="spacer" />
+        {tx?.costUsd !== undefined && (
+          <span className="small muted" title="What these tokens would cost through the Claude API. In Claude Code they count against your plan's usage instead.">
+            ≈ {usd(tx.costUsd)} at API prices
+          </span>
+        )}
         <label className="small muted" style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
           <input type="checkbox" checked={raw} onChange={() => setRaw(!raw)} /> Every command output
         </label>
       </div>
       <div className="tm-roster">
-        {Object.entries(ROLE).map(([k, r]) => (
-          <button key={k} className={`tm-member ${only === k ? "on" : ""} ${counts.get(k) ? "active" : ""}`} onClick={() => setOnly(only === k ? undefined : k)} title={r.skill ? `/${r.skill}` : "runs /trade-desk"}>
-            <span className="tm-icon">{r.icon}</span>
-            <span>{r.label}</span>
-            <span className="muted mono">{counts.get(k) ?? 0}</span>
-          </button>
-        ))}
+        {Object.entries(ROLE).map(([k, r]) => {
+          const u = usage.get(k);
+          const model = modelName(u?.model ?? (k === "lead" ? "inherit" : models[k]));
+          return (
+            <button
+              key={k}
+              className={`tm-member ${only === k ? "on" : ""} ${counts.get(k) ? "active" : ""}`}
+              onClick={() => setOnly(only === k ? undefined : k)}
+              title={[r.skill ? `/${r.skill}` : "runs /trade-desk", model && `model: ${model}`, u && usageTip(u)].filter(Boolean).join("\n")}
+            >
+              <span className="tm-icon">{r.icon}</span>
+              <span>{r.label}</span>
+              {model && <span className="tm-model">{model}</span>}
+              <span className="muted mono">{counts.get(k) ?? 0}</span>
+              {u?.costUsd !== undefined && <span className="muted mono">{usd(u.costUsd)}</span>}
+            </button>
+          );
+        })}
       </div>
       {sess.summary && <div className="dk-read"><span className="dk-read-icon">✦</span><div>{sess.summary}</div></div>}
       {tx?.note && <div className="small muted">{tx.note}</div>}

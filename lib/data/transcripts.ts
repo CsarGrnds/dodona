@@ -19,12 +19,78 @@ export interface TeamStep {
   ok?: boolean;
 }
 
+export interface AgentUsage {
+  model?: string; // e.g. "claude-haiku-5-5", from the transcript
+  calls: number; // model responses
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  costUsd?: number; // estimate at API list prices; undefined for a model not in PRICES
+}
+
 export interface TeamTranscript {
   file?: string;
   sessionId?: string;
   steps: TeamStep[];
-  agents: Array<{ agent: string; steps: number }>;
+  agents: Array<{ agent: string; steps: number; usage?: AgentUsage }>;
+  /** What the session would have cost through the API (Claude Code itself uses the plan's usage). */
+  costUsd?: number;
   note?: string;
+}
+
+/** API list prices per million tokens: input, output. Cache reads are 0.1x input, writes 1.25x (5 min) or 2x (1 hour). */
+export const PRICES: Array<{ match: RegExp; input: number; output: number; label: string }> = [
+  { match: /opus-5-5/, input: 4, output: 20, label: "Opus 5.5" },
+  { match: /sonnet-5-5/, input: 2, output: 10, label: "Sonnet 5.5" },
+  // Haiku 5.5 has two rate cards: prompts over 100K tokens cost 5x
+  { match: /haiku-5-5/, input: 0.1, output: 0.5, label: "Haiku 5.5" },
+];
+export const modelLabel = (m?: string) => (m ? PRICES.find((p) => p.match.test(m))?.label ?? m.replace(/^claude-/, "") : undefined);
+
+interface Usage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
+}
+
+/** Tokens and estimated API cost of these records. A response split over several records is counted once (by message id). */
+export function usageFrom(recs: Rec[]): AgentUsage | undefined {
+  const seen = new Set<string>();
+  const u: AgentUsage = { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  let cost = 0;
+  let priced = true;
+  for (const r of recs) {
+    const m = r.message;
+    if (m?.role !== "assistant" || !m.usage) continue;
+    const id = m.id ?? `${r.timestamp}-${seen.size}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const x = m.usage;
+    const input = x.input_tokens ?? 0;
+    const read = x.cache_read_input_tokens ?? 0;
+    const write = x.cache_creation_input_tokens ?? 0;
+    const w1h = Math.min(write, x.cache_creation?.ephemeral_1h_input_tokens ?? 0);
+    u.model ??= m.model;
+    u.calls++;
+    u.input += input;
+    u.output += x.output_tokens ?? 0;
+    u.cacheRead += read;
+    u.cacheWrite += write;
+    const p = PRICES.find((q) => q.match.test(m.model ?? ""));
+    if (!p) {
+      priced = false;
+      continue;
+    }
+    const long = /haiku/.test(m.model ?? "") && input + read + write > 100_000 ? 5 : 1;
+    const inP = (p.input * long) / 1e6;
+    cost += input * inP + read * inP * 0.1 + (write - w1h) * inP * 1.25 + w1h * inP * 2 + (x.output_tokens ?? 0) * ((p.output * long) / 1e6);
+  }
+  if (!u.calls) return undefined;
+  if (priced) u.costUsd = Math.round(cost * 10_000) / 10_000;
+  return u;
 }
 
 const DETAIL_MAX = 2500;
@@ -50,7 +116,7 @@ interface Rec {
   sessionId?: string;
   isSidechain?: boolean;
   agentId?: string;
-  message?: { role?: string; content?: unknown };
+  message?: { role?: string; content?: unknown; id?: string; model?: string; usage?: Usage };
 }
 
 function resultText(c: unknown): string {
@@ -120,6 +186,18 @@ export function stepsFrom(recs: Rec[], agent: string): { steps: TeamStep[]; dele
   return { steps, delegates };
 }
 
+/** The model each trade subagent is set to run on (the `model:` line of .claude/agents/trade-*.md). */
+export async function teamModels(root = process.cwd()): Promise<Record<string, string>> {
+  const dir = join(root, ".claude", "agents");
+  const out: Record<string, string> = {};
+  for (const f of await readdir(dir).catch(() => [] as string[])) {
+    if (!/^trade-[a-z]+\.md$/.test(f)) continue;
+    const m = (await readFile(join(dir, f), "utf8").catch(() => "")).match(/^---[\s\S]*?^model:\s*([\w.-]+)\s*$[\s\S]*?^---/m);
+    if (m) out[f.replace(/\.md$/, "")] = m[1];
+  }
+  return out;
+}
+
 /** A record where the lead ran `npm run desk -- session start` (the /trade-desk cycle's first step). */
 const startsSession = (r: Rec) =>
   (r.message?.content as Block[]).some((b) => b.type === "tool_use" && b.name === "Bash" && /npm run (?:-s )?desk -- session start/.test(String(b.input?.command ?? "")));
@@ -166,8 +244,25 @@ export async function readTeamTranscript(startedAt: string, endedAt?: string): P
     else if (!lead && recs.some(startsSession)) lead = { file: f, recs };
   }
   if (!lead) return { steps: [], agents: [], note: "The team's Claude Code session wasn't found yet (it appears once /trade-desk has started)." };
-  const main = stepsFrom(lead.recs.filter((r) => !r.isSidechain), "lead");
+  const leadRecs = lead.recs.filter((r) => !r.isSidechain);
+  const main = stepsFrom(leadRecs, "lead");
   const steps = [...main.steps];
+  const usage = new Map<string, AgentUsage>();
+  const addUsage = (agent: string, u?: AgentUsage) => {
+    if (!u) return;
+    const a = usage.get(agent);
+    if (!a) return void usage.set(agent, { ...u });
+    a.model ??= u.model;
+    a.calls += u.calls;
+    a.input += u.input;
+    a.output += u.output;
+    a.cacheRead += u.cacheRead;
+    a.cacheWrite += u.cacheWrite;
+    a.costUsd = a.costUsd !== undefined && u.costUsd !== undefined ? Math.round((a.costUsd + u.costUsd) * 10_000) / 10_000 : undefined;
+  };
+  // the lead's usage only from the session's own window: the main file also holds earlier, unrelated turns
+  const t0 = Date.parse(leadRecs.find(startsSession)?.timestamp ?? startedAt) - 60_000;
+  addUsage("lead", usageFrom(leadRecs.filter((r) => Date.parse(r.timestamp!) >= t0)));
   // each subagent file belongs to the delegate that started just before it
   const used = new Set<string>();
   for (const s of subs.sort((a, b) => Date.parse(a.recs[0].timestamp!) - Date.parse(b.recs[0].timestamp!))) {
@@ -176,15 +271,19 @@ export async function readTeamTranscript(startedAt: string, endedAt?: string): P
     if (!d) continue;
     used.add(d.id);
     // skip the subagent's first user message (its prompt, already shown on the delegate step)
+    addUsage(d.agent, usageFrom(s.recs));
     steps.push(...stepsFrom(s.recs.filter((r) => r.message?.role === "assistant" || (r.message!.content as Block[]).some((b) => b.type === "tool_result")), d.agent).steps);
   }
   steps.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const count = new Map<string, number>();
   for (const s of steps) count.set(s.agent, (count.get(s.agent) ?? 0) + 1);
+  for (const a of usage.keys()) if (!count.has(a)) count.set(a, 0);
+  const costs = [...usage.values()].map((u) => u.costUsd);
   return {
     file: lead.file.split("/").pop(),
     sessionId: lead.recs.find((r) => r.sessionId)?.sessionId,
     steps: steps.slice(-600),
-    agents: [...count.entries()].map(([agent, n]) => ({ agent, steps: n })),
+    agents: [...count.entries()].map(([agent, n]) => ({ agent, steps: n, usage: usage.get(agent) })),
+    costUsd: costs.length && costs.every((c) => c !== undefined) ? Math.round(costs.reduce((a, b) => a! + b!, 0)! * 100) / 100 : undefined,
   };
 }

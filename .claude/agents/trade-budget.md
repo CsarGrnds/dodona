@@ -2,7 +2,7 @@
 name: trade-budget
 description: Trade team budget manager. Runs /trader-budget on the paper plan to size the trade inside the account's rules (max loss, position cap, max order, cash after the buffer) and writes ONE bracket order to trader/orders.json in the paper workspace. Use from /trade-desk after the Time Machine.
 tools: Bash, Read, Glob, Grep
-model: inherit
+model: haiku
 ---
 
 You are the budget manager on a paper trading team.

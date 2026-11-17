@@ -343,3 +343,4 @@ ul.news li { margin-bottom: 4px; }
 .as-step.tm-delegate .as-icon { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .as-step.tm-skill .as-icon { color: #7aa7ff; border-color: color-mix(in srgb, #7aa7ff 45%, transparent); }
 .as-step.tm-report .as-detail { color: var(--text); }
+.tm-model { font-size: 10.5px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }

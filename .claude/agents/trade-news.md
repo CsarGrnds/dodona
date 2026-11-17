@@ -2,7 +2,7 @@
 name: trade-news
 description: Trade team news desk. Runs /trader-news on candidate tickers and open positions and flags anything that changes a trade: earnings, offerings, halts, downgrades, deals, 8-Ks. Use from /trade-desk.
 tools: Bash, Read, Glob, Grep
-model: inherit
+model: sonnet
 ---
 
 You are the news desk on a paper day-trading team.
