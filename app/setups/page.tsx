@@ -149,6 +149,7 @@ export default function SetupsPage() {
           <Link className="btn ghost" href="/portfolio">Portfolio</Link>
           <Link className="btn ghost" href="/desk">Desk</Link>
           <Link className="btn ghost" href="/status">Status</Link>
+          <Link className="btn ghost" href="/settings">Settings</Link>
           <button className="btn primary" onClick={() => { setRows({}); scan(symbols); }} disabled={running || !symbols.length}>
             {running ? <><Spinner /> {done}/{symbols.length}</> : "Rescan"}
           </button>

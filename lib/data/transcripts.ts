@@ -6,7 +6,7 @@
 // The transcript format is Claude Code's internal one and isn't documented, so this reader is
 // defensive: it only relies on records with a `timestamp` and a `message.content` array of
 // text / thinking / tool_use / tool_result blocks, and skips anything else.
-import { readdir, readFile, stat } from "node:fs/promises";
+import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -170,7 +170,7 @@ export function stepsFrom(recs: Rec[], agent: string): { steps: TeamStep[]; dele
           steps.push({ at, agent, kind: skill ? "skill" : "command", title, detail: cut(cmd, 800) });
           pending.set(b.id, { kind: "bash", title });
         } else {
-          const title = b.name === "Skill" ? `Skill /${String(inp.skill ?? "")}` : b.name === "Read" ? `Read ${String(inp.file_path ?? "").split("/").slice(-3).join("/")}` : String(b.name ?? "tool");
+          const title = b.name === "Skill" ? `Skill /${String(inp.skill ?? "")}` : b.name === "Read" ? `Read ${String(inp.file_path ?? "").split("/").slice(-3).join("/")}` : String(b.name ?? "tool").replace(/^mcp__(.+?)__(.+)$/, (_, srv: string, t: string) => `${/^[0-9a-f-]{20,}$/.test(srv) ? "connector" : srv.replace(/_/g, " ")} · ${t.replace(/_/g, " ")}`);
           steps.push({ at, agent, kind: "tool", title });
           pending.set(b.id, { kind: "other", title });
         }
@@ -245,6 +245,13 @@ export async function readTeamTranscript(startedAt: string, endedAt?: string): P
   }
   if (!lead) return { steps: [], agents: [], note: "The team's Claude Code session wasn't found yet (it appears once /trade-desk has started)." };
   const leadRecs = lead.recs.filter((r) => !r.isSidechain);
+  // the lead's usage only from the session's own window: the main file also holds earlier, unrelated turns
+  const t0 = Date.parse(leadRecs.find(startsSession)?.timestamp ?? startedAt) - 60_000;
+  return assemble(lead.file, leadRecs, subs, leadRecs.filter((r) => Date.parse(r.timestamp!) >= t0));
+}
+
+/** One transcript view from a main session's records and its subagents' files. */
+function assemble(file: string, leadRecs: Rec[], subs: Array<{ file: string; recs: Rec[] }>, usageRecs = leadRecs, limit = 600): TeamTranscript {
   const main = stepsFrom(leadRecs, "lead");
   const steps = [...main.steps];
   const usage = new Map<string, AgentUsage>();
@@ -260,9 +267,7 @@ export async function readTeamTranscript(startedAt: string, endedAt?: string): P
     a.cacheWrite += u.cacheWrite;
     a.costUsd = a.costUsd !== undefined && u.costUsd !== undefined ? Math.round((a.costUsd + u.costUsd) * 10_000) / 10_000 : undefined;
   };
-  // the lead's usage only from the session's own window: the main file also holds earlier, unrelated turns
-  const t0 = Date.parse(leadRecs.find(startsSession)?.timestamp ?? startedAt) - 60_000;
-  addUsage("lead", usageFrom(leadRecs.filter((r) => Date.parse(r.timestamp!) >= t0)));
+  addUsage("lead", usageFrom(usageRecs));
   // each subagent file belongs to the delegate that started just before it
   const used = new Set<string>();
   for (const s of subs.sort((a, b) => Date.parse(a.recs[0].timestamp!) - Date.parse(b.recs[0].timestamp!))) {
@@ -270,8 +275,8 @@ export async function readTeamTranscript(startedAt: string, endedAt?: string): P
     const d = [...main.delegates].reverse().find((x) => x.at <= t0 + 2_000 && !used.has(x.id));
     if (!d) continue;
     used.add(d.id);
-    // skip the subagent's first user message (its prompt, already shown on the delegate step)
     addUsage(d.agent, usageFrom(s.recs));
+    // skip the subagent's first user message (its prompt, already shown on the delegate step)
     steps.push(...stepsFrom(s.recs.filter((r) => r.message?.role === "assistant" || (r.message!.content as Block[]).some((b) => b.type === "tool_result")), d.agent).steps);
   }
   steps.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
@@ -280,10 +285,105 @@ export async function readTeamTranscript(startedAt: string, endedAt?: string): P
   for (const a of usage.keys()) if (!count.has(a)) count.set(a, 0);
   const costs = [...usage.values()].map((u) => u.costUsd);
   return {
-    file: lead.file.split("/").pop(),
-    sessionId: lead.recs.find((r) => r.sessionId)?.sessionId,
-    steps: steps.slice(-600),
+    file: file.split("/").pop(),
+    sessionId: leadRecs.find((r) => r.sessionId)?.sessionId,
+    steps: steps.slice(-limit),
     agents: [...count.entries()].map(([agent, n]) => ({ agent, steps: n, usage: usage.get(agent) })),
     costUsd: costs.length && costs.every((c) => c !== undefined) ? Math.round(costs.reduce((a, b) => a! + b!, 0)! * 100) / 100 : undefined,
   };
+}
+
+// ---- Any Claude Code session of this project (Desk: "All Claude Code sessions")
+
+export interface ClaudeSessionInfo {
+  id: string; // the transcript's file name without .jsonl
+  title: string; // the first thing the user typed
+  startedAt?: string;
+  updatedAt: string;
+  sizeKb: number;
+  subagents: number;
+  live: boolean; // written to in the last 2 minutes
+}
+
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const isSessionId = (id: string) => SESSION_ID.test(id);
+const LIVE_MS = 2 * 60_000;
+
+/** The first prompt the user typed (not a command wrapper or a system note), from the start of a transcript. */
+export function firstPrompt(head: string): { title: string; startedAt?: string } {
+  let startedAt: string | undefined;
+  for (const line of head.split("\n")) {
+    let r: Rec;
+    try {
+      r = JSON.parse(line) as Rec;
+    } catch {
+      continue;
+    }
+    startedAt ??= r.timestamp;
+    if (r.message?.role !== "user" || r.isSidechain) continue;
+    const c = r.message.content;
+    const text = typeof c === "string" ? c : Array.isArray(c) ? (c as Block[]).filter((b) => b.type === "text").map((b) => b.text ?? "").join(" ") : "";
+    const t = text.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (t && !t.startsWith("Caveat:")) return { title: t.length > 120 ? `${t.slice(0, 120)}…` : t, startedAt };
+  }
+  return { title: "(no prompt yet)", startedAt };
+}
+
+/** This project's Claude Code sessions on this machine, newest first. */
+export async function listClaudeSessions(limit = 30): Promise<ClaudeSessionInfo[]> {
+  const dir = projectDir();
+  const names = (await readdir(dir).catch(() => [] as string[])).filter((f) => f.endsWith(".jsonl") && isSessionId(f.slice(0, -6)));
+  const rows = await Promise.all(
+    names.map(async (f) => {
+      const p = join(dir, f);
+      const st = await stat(p).catch(() => null);
+      return st ? { f, p, st } : null;
+    }),
+  );
+  const recent = rows.filter((x): x is NonNullable<typeof x> => !!x).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, limit);
+  return Promise.all(
+    recent.map(async ({ f, p, st }) => {
+      const id = f.slice(0, -6);
+      const fh = await open(p, "r");
+      let head = "";
+      try {
+        const buf = Buffer.alloc(Math.min(st.size, 256 * 1024));
+        await fh.read(buf, 0, buf.length, 0);
+        head = buf.toString("utf8");
+      } finally {
+        await fh.close();
+      }
+      const subs = (await readdir(join(dir, id, "subagents")).catch(() => [] as string[])).filter((x) => x.endsWith(".jsonl")).length;
+      return { id, ...firstPrompt(head), updatedAt: st.mtime.toISOString(), sizeKb: Math.round(st.size / 1024), subagents: subs, live: Date.now() - st.mtimeMs < LIVE_MS };
+    }),
+  );
+}
+
+// a parsed session is reused until its files change, so polling a long session stays cheap
+const cache = new Map<string, { key: string; tx: TeamTranscript }>();
+
+/** Everything one Claude Code session did: its steps, its subagents' work, models, tokens and cost. */
+export async function readClaudeSession(id: string): Promise<TeamTranscript & { live: boolean }> {
+  if (!isSessionId(id)) throw new Error("not a session id");
+  const dir = projectDir();
+  const main = join(dir, `${id}.jsonl`);
+  const st = await stat(main).catch(() => null);
+  if (!st) throw new Error("No such Claude Code session on this machine.");
+  const subDir = join(dir, id, "subagents");
+  const subFiles = (await readdir(subDir).catch(() => [] as string[])).filter((x) => x.endsWith(".jsonl")).map((x) => join(subDir, x));
+  const subStats = await Promise.all(subFiles.map((f) => stat(f).catch(() => null)));
+  const key = [st.mtimeMs, st.size, ...subStats.map((s) => `${s?.mtimeMs}:${s?.size}`)].join("|");
+  const live = Date.now() - Math.max(st.mtimeMs, ...subStats.map((s) => s?.mtimeMs ?? 0)) < LIVE_MS;
+  const hit = cache.get(id);
+  if (hit?.key === key) return { ...hit.tx, live };
+  const recs = parseLines(await readFile(main, "utf8"), 0, Infinity).filter((r) => !r.isSidechain);
+  const subs: Array<{ file: string; recs: Rec[] }> = [];
+  for (const f of subFiles) {
+    const r = parseLines(await readFile(f, "utf8").catch(() => ""), 0, Infinity);
+    if (r.length) subs.push({ file: f, recs: r });
+  }
+  const tx = assemble(main, recs, subs, recs, 800);
+  if (cache.size > 8) cache.delete(cache.keys().next().value!);
+  cache.set(id, { key, tx });
+  return { ...tx, live };
 }

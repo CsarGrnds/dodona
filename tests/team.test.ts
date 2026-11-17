@@ -2,7 +2,20 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { newDesk, openPosition } from "../lib/desk";
 import { acceptTeamOrder, brokerState, orderFingerprint, paperPortfolio } from "../lib/data/paper";
-import { projectSlug, stepsFrom, teamModels, usageFrom } from "../lib/data/transcripts";
+import { firstPrompt, isSessionId, projectSlug, stepsFrom, teamModels, usageFrom } from "../lib/data/transcripts";
+
+test("any Claude Code session: its first prompt as the title, and only real session ids", () => {
+  const head = [
+    JSON.stringify({ timestamp: "2026-11-17T10:00:00Z", type: "summary" }),
+    JSON.stringify({ timestamp: "2026-11-17T10:00:01Z", message: { role: "user", content: "<command-name>/clear</command-name>" } }),
+    JSON.stringify({ timestamp: "2026-11-17T10:00:02Z", message: { role: "user", content: [{ type: "text", text: "<system-reminder>x</system-reminder> run the trade desk" }] } }),
+  ].join("\n");
+  assert.deepEqual(firstPrompt(head), { title: "run the trade desk", startedAt: "2026-11-17T10:00:00Z" });
+  assert.ok(isSessionId("a57fdd65-2c13-4278-be31-ff222ab21811"));
+  assert.ok(!isSessionId("../../etc/passwd"));
+  const { steps } = stepsFrom([{ timestamp: "2026-11-17T10:00:03Z", message: { role: "assistant", content: [{ type: "tool_use", id: "t", name: "mcp__Claude_Browser__read_page", input: {} }] } }], "lead");
+  assert.equal(steps[0].title, "Claude Browser · read page");
+});
 
 test("each specialist runs on a model sized to its job", async () => {
   const m = await teamModels();

@@ -2,7 +2,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentSessionView, AgentToolbox } from "@/components/AgentSessionView";
-import { TEAM_MODEL, TeamSessionView } from "@/components/TeamSessionView";
+import { IbkrOrderPanel } from "@/components/IbkrOrderPanel";
+import { ClaudeSessionView, TEAM_MODEL, TeamSessionView, type ClaudeSessionInfo } from "@/components/TeamSessionView";
 import { DailyPnlChart, EquityChart, PnlCalendar, RDistribution, signedUsd } from "@/components/DeskCharts";
 import { Brand, Spinner } from "@/components/ui";
 import { fmt } from "@/lib/client";
@@ -39,6 +40,45 @@ export default function DeskPage() {
   const [, tick] = useState(0);
   const runningRef = useRef(false);
   const [live, setLive] = useState<AgentSession>();
+  // "All Claude Code sessions": any session of this project on this machine, not only the trade team's
+  const [allCc, setAllCc] = useState(false);
+  const [ccList, setCcList] = useState<ClaudeSessionInfo[]>();
+  const [ccPick, setCcPick] = useState<string>();
+  const [ccErr, setCcErr] = useState<string>();
+  useEffect(() => {
+    try {
+      setAllCc(localStorage.getItem("dodona.allClaudeSessions") === "1");
+    } catch {
+      /* private window */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem("dodona.allClaudeSessions", allCc ? "1" : "0");
+    } catch {
+      /* private window */
+    }
+    if (!allCc) return;
+    let on = true;
+    const load = () =>
+      fetch("/api/claude/sessions", { cache: "no-store" })
+        .then(async (r) => {
+          const j = await r.json();
+          if (!on) return;
+          if (!r.ok) setCcErr(j.error ?? "Couldn't read Claude Code sessions.");
+          else {
+            setCcErr(undefined);
+            setCcList(j.sessions);
+          }
+        })
+        .catch(() => on && setCcErr("Couldn't read Claude Code sessions."));
+    load();
+    const id = setInterval(load, 15_000);
+    return () => {
+      on = false;
+      clearInterval(id);
+    };
+  }, [allCc]);
   const [pick, setPick] = useState<string>();
 
   const load = useCallback(async () => {
@@ -145,6 +185,7 @@ export default function DeskPage() {
   const st = d.stats;
   const saved = d.sessions ?? [];
   const shown: AgentSession | undefined = running && live ? live : saved.find((x) => x.id === pick) ?? saved[0];
+  const ccShown = ccList?.find((x) => x.id === ccPick) ?? ccList?.[0];
   const today = st.today;
   const nextRunIn = auto && d.lastRunAt ? Math.max(0, Date.parse(d.lastRunAt) + AUTO_MS - Date.now()) : undefined;
 
@@ -158,6 +199,7 @@ export default function DeskPage() {
           <Link className="btn ghost" href="/setups">Setups</Link>
           <Link className="btn ghost" href="/portfolio">Portfolio</Link>
           <Link className="btn ghost" href="/status">Status</Link>
+          <Link className="btn ghost" href="/settings">Settings</Link>
         </div>
       </div>
 
@@ -215,7 +257,21 @@ export default function DeskPage() {
         <div className="row" style={{ marginBottom: 10 }}>
           <h2 style={{ margin: 0 }}>✦ Claude&apos;s session</h2>
           <span className="spacer" />
-          {saved.length > 1 && !(running && live) && (
+          <label className="small muted" style={{ display: "inline-flex", gap: 6, alignItems: "center", marginRight: 8 }} title="Show any Claude Code session of this project on this computer (this one included), not only the trade team's">
+            <input type="checkbox" checked={allCc} onChange={() => setAllCc(!allCc)} /> All Claude Code sessions
+          </label>
+          {allCc && ccList && ccList.length > 0 && (
+            <select className="as-pick" value={ccShown?.id} onChange={(e) => setCcPick(e.target.value)}>
+              {ccList.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.live ? "● " : ""}
+                  {new Date(x.updatedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · {x.title.slice(0, 50)}
+                  {x.subagents ? ` · ${x.subagents} subagents` : ""}
+                </option>
+              ))}
+            </select>
+          )}
+          {!allCc && saved.length > 1 && !(running && live) && (
             <select className="as-pick" value={shown?.id} onChange={(e) => setPick(e.target.value)}>
               {saved.map((x) => (
                 <option key={x.id} value={x.id}>
@@ -225,7 +281,22 @@ export default function DeskPage() {
             </select>
           )}
         </div>
-        {shown?.model === TEAM_MODEL ? (
+        {allCc ? (
+          ccErr ? (
+            <div className="err">{ccErr}</div>
+          ) : !ccList ? (
+            <div className="muted small"><Spinner /> Reading Claude Code sessions…</div>
+          ) : !ccShown ? (
+            <div className="dk-empty">No Claude Code sessions for this project on this computer yet.</div>
+          ) : (
+            <>
+              <div className="small muted" style={{ marginBottom: 8 }}>
+                Read from this computer&apos;s Claude Code transcripts. Sessions that ran in the cloud (claude.ai/code) keep their logs there, so they don&apos;t show here.
+              </div>
+              <ClaudeSessionView key={ccShown.id} info={ccShown} />
+            </>
+          )
+        ) : shown?.model === TEAM_MODEL ? (
           <TeamSessionView session={shown} onLive={load} />
         ) : shown ? (
           <AgentSessionView session={shown} live={running && !!live} />
@@ -241,6 +312,9 @@ export default function DeskPage() {
           </>
         )}
       </section>
+
+      {/* ---- the real-account order ticket (IBKR), off until turned on in Settings */}
+      <IbkrOrderPanel />
 
       {/* ---- stat tiles */}
       <section className="dk-tiles">

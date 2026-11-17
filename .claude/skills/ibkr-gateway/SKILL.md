@@ -24,8 +24,12 @@ with `IBKR_GATEWAY_DIR`). It serves IBKR's Web API on **https://localhost:5001**
 
 - **Read-only.** This skill, `npm run ibkr` and Dodona's Today page only read
   accounts, positions, the summary, open orders (to compare your stops) and
-  account performance (the main screen's chart). Never call order, trade, alert or account-setting endpoints. An
+  account performance (the main screen's chart). Never call order, trade, alert or account-setting endpoints. The one
+  exception is Dodona's IBKR order panel (`lib/data/ibkrOrders.ts`): its what-if preview places
+  nothing, and only the user's typed confirmation and click there can place an order. An
   order needs the user's explicit yes for that exact order (see `AGENTS.md`).
+- **A paper login isn't your portfolio.** Don't `sync` while the gateway is logged in to a paper
+  account (DU…): it would overwrite `trader/portfolio.json` with the paper account's positions.
 - **Credentials are the user's.** Never type, ask for, store or log the IBKR
   username, password or two-factor codes. The user logs in on the gateway's
   own page. Don't open the login page in a browser you control to sign in.

@@ -43,6 +43,9 @@ Dashboard:                       /api/performance (IBKR account value) · /api/p
 Portfolio:                       /api/portfolio (trader/portfolio.json) · /api/ibkr (IBKR gateway sync)
 Status:                          /api/status (live check of every connector)
 Desk:                            /api/desk · /api/desk/run · /api/desk/reset · /api/desk/live · /api/desk/team (the paper desk, Claude's live session, the trade team's session)
+IBKR orders:                     /api/ibkr/orders (GET the ticket, its gates and today's IBKR activity; POST preview, or place/answer from a click in Dodona only)
+Settings:                        /api/settings (GET the trading rules, team models and driver; POST to save, localhost only)
+Claude Code sessions:            /api/claude/sessions · /api/claude/sessions/<id> (this project's Claude Code sessions on this computer, localhost only)
 Today:                           /api/today (holdings + open IBKR orders + watchlist → stops, discounts, buy limits)
 ```
 
@@ -96,7 +99,9 @@ Check changes with real market data. `DODONA_MOCK=1 npm run dev` (synthetic data
 | `lib/pulse.ts`, `app/api/pulse/route.ts`, `components/PortfolioPulse.tsx` | Main screen: winners, losers and why the portfolio is up or down |
 | `lib/performance.ts`, `app/api/performance/route.ts`, `components/AccountChart.tsx` | Main screen: account value chart from IBKR (NAV + time-weighted return) |
 | `lib/status.ts`, `lib/data/status.ts`, `app/api/status/route.ts`, `app/status/page.tsx` | Status: live health check of every connector |
-| `.claude/skills/trade-desk/`, `.claude/agents/trade-*.md`, `scripts/desk.ts`, `lib/data/paper.ts`, `lib/data/transcripts.ts`, `app/api/desk/team/route.ts`, `components/TeamSessionView.tsx` | Trade team: the lead skill, 8 specialist subagents, the paper workspace and booking check, and the live team view from Claude Code transcripts |
+| `lib/ibkrOrder.ts`, `lib/data/ibkrOrders.ts`, `app/api/ibkr/orders/route.ts`, `components/IbkrOrderPanel.tsx` | IBKR orders: trader-broker's gates for Interactive Brokers, the bracket translation, preview, placing on your click, today's orders and fills |
+| `lib/settings.ts`, `lib/data/settings.ts`, `lib/data/localOnly.ts`, `app/api/settings/route.ts`, `app/settings/page.tsx` | Settings: the trading rules, the desk's driver and the trade team's models, validated and saved locally |
+| `.claude/skills/trade-desk/`, `.claude/agents/trade-*.md`, `scripts/desk.ts`, `lib/data/paper.ts`, `lib/data/transcripts.ts`, `lib/data/localOnly.ts`, `app/api/desk/team/route.ts`, `app/api/claude/sessions/`, `components/TeamSessionView.tsx` | Trade team: the lead skill, 8 specialist subagents, the paper workspace and booking check, the live team view and any Claude Code session of this project, from its transcripts |
 | `lib/desk.ts`, `lib/deskAgent.ts`, `lib/data/desk.ts`, `lib/data/deskRun.ts`, `lib/data/deskTools.ts`, `lib/data/deskLive.ts`, `lib/data/deskView.ts`, `app/api/desk/*`, `app/desk/page.tsx`, `components/DeskCharts.tsx`, `components/AgentSessionView.tsx` | Desk: Claude's paper trading desk: ledger, sizing, risk gate, fills from bars, the agent's tool loop and research tools, its live session, P&L history and charts |
 | `tests/` | Node test runner suites (`npm test`) |
 
@@ -243,6 +248,32 @@ Dodona's own skills, in the same folder:
 - `/dodona-sync`: "sync my IBKR positions" through Claude's IBKR connector.
 - `/trade-desk`: "run the trade desk". The paper **trade team**, below.
 
+## Settings: every trading rule in one place
+
+`/settings` edits the rules Dodona's desk, the trade team and every `/trader-*` skill follow, saved in `trader/config.json` (the file `/trader-budget`'s "set my rules" creates):
+
+- **Money:** budget, cash buffer, biggest position, biggest and smallest order.
+- **Risk:** max loss per trade (it sizes every trade), max loss per day, minimum reward:risk, require a stop.
+- **Trading day:** trades and orders per day, the entry window and the flat-by time (New York).
+- **Stocks:** tickers never to trade, fractional shares, the SEC contact for EDGAR.
+- **Broker:** Interactive Brokers or Alpaca, and whether Dodona may send orders to IBKR (see below).
+- **Who makes the desk's entries:** the Claude Code trade team or Dodona's own desk.
+- **Trade team models:** the model each specialist runs on (the `model:` line in `.claude/agents/trade-*.md`).
+
+Values are checked as you type, across fields too (a day's loss limit can't be under one trade's, entries end before the flat-by time). Nothing is silently replaced. Saving keeps every other key in the file, leaves the previous version in `trader/config.prev.json`, and updates the trade team's paper workspace. The safety switches (paper, margin, short selling, options) are shown but can only be changed by you, in the file. `/api/settings` answers only localhost, and its save refuses requests from other websites.
+
+## IBKR orders: ready for when you trade (off by default)
+
+The Desk's **IBKR order** panel is `/trader-broker`'s job, for Interactive Brokers. It takes the one bracket order in `trader/orders.json` (from `/trader-budget` and `/trader-risk`, run from the repo root against your real portfolio). It sends it through the local Client Portal Gateway as a real IBKR bracket: a buy with a stop-loss and a take-profit that cancel each other and wait at IBKR. Every gate:
+
+1. **Off until you turn it on:** Settings → Broker: Interactive Brokers, and **Send orders to IBKR**.
+2. **Paper first:** while Paper trading is on (the default), it only sends to an IBKR paper account (DU…). Log in to the gateway with your paper login. Going live means setting `"paper": false` yourself, in `trader/config.json`; the page never does it.
+3. **trader-risk PASSED this exact order** (same fingerprint) in the last 15 minutes, while the market is open, and it was never sent before.
+4. **Your yes:** **Preview at IBKR** shows IBKR's what-if (cost, commission, warnings) and places nothing. Then you type the quantity and symbol (`8 TSLA`) and click **Place**. Only a click on Dodona's page can place it: scripts, other websites and Claude are refused.
+5. **IBKR's own questions** (market data warnings, price caps…) come back to you, one by one, to confirm or cancel.
+
+Each step is logged to `trader/state/broker.json` in `/trader-broker`'s format, so `/trader-risk` counts what was placed against your daily limits. A placed order's `orders.json` is renamed so it can't be sent again. The panel also shows today's working orders and fills at IBKR (read-only). Not yet: selling to flatten from the panel (cancel the bracket's children, then sell), and the trade team sending its paper picks to the IBKR paper account.
+
 ## Trade team: Claude Code runs the real skills, Dodona shows it
 
 `/trade-desk` makes Claude Code the **lead trader** of a paper day-trading team. It sends the work to eight specialist subagents (`.claude/agents/trade-*.md`), each using one real skill, and books on Dodona's paper desk only what trader-risk passes:
@@ -258,7 +289,7 @@ Dodona's own skills, in the same folder:
 | `trade-budget` | `/trader-budget` | Haiku | Shares inside your rules, one bracket order |
 | `trade-risk` | `/trader-risk` | Haiku | PASS or BLOCK: the last word |
 
-**Each agent on the right model.** The lead runs on your Claude Code session's model (Opus) and makes every call. The six specialists that run a script and report its numbers use Haiku; News and Analyst, which judge headlines and earnings, use Sonnet. Change one with the `model:` line in its `.claude/agents/trade-*.md`. The Desk page shows each agent's model, tokens and estimated cost per session.
+**Each agent on the right model.** The lead runs on your Claude Code session's model (Opus) and makes every call. The six specialists that run a script and report its numbers use Haiku; News and Analyst, which judge headlines and earnings, use Sonnet. Change one on the Settings page (or the `model:` line in its `.claude/agents/trade-*.md`). The Desk page shows each agent's model, tokens and estimated cost per session.
 
 How it stays paper and safe:
 
@@ -273,6 +304,8 @@ How it stays paper and safe:
 
 - **Verdicts** the team logs with `npm run desk -- log`.
 - **Everything behind them**, read from this machine's Claude Code transcripts (`~/.claude/projects/<this project>/`): the lead's reasoning, each subagent it sent out and its report, and every skill run with its command. Turn on "Every command output" to see the raw output too.
+
+**All Claude Code sessions.** Tick **All Claude Code sessions** in the same panel to see any Claude Code session of this project on this computer, not only the trade team's: pick one from the list (● marks a live one) to see its steps, every tool and skill it ran, each subagent with its model, and its tokens and estimated API cost. It follows a live session every 4 seconds. Sessions that ran in the cloud (claude.ai/code) keep their logs on the cloud machine, so they don't show. Transcripts hold whole conversations, so `/api/claude/sessions` and `/api/desk/team` answer only requests to `localhost` (`next dev` also listens on your network).
 
 Claude Code's transcript format isn't documented, so the reader skips anything it doesn't recognize. The logged verdicts still show if the format changes.
 
