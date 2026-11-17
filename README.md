@@ -42,6 +42,7 @@ Also loaded by the ticker page:  /api/setups (setups + track records) · /api/re
 Dashboard:                       /api/performance (IBKR account value) · /api/pulse (winners, losers, why) · /api/congress
 Portfolio:                       /api/portfolio (trader/portfolio.json) · /api/ibkr (IBKR gateway sync)
 Status:                          /api/status (live check of every connector)
+Desk:                            /api/desk · /api/desk/run · /api/desk/reset (the paper trading desk)
 Today:                           /api/today (holdings + open IBKR orders + watchlist → stops, discounts, buy limits)
 ```
 
@@ -89,11 +90,12 @@ Check changes with real market data. `DODONA_MOCK=1 npm run dev` (synthetic data
 | `lib/congress.ts`, `lib/data/congress.ts`, `components/CongressCard.tsx` | House PTR index + PDF parsing (ported from `/trader-pelosi`) and the dashboard card |
 | `lib/data/ibkr.ts`, `app/api/ibkr/route.ts`, `components/IbkrSync.tsx` | Read-only IBKR Client Portal Gateway: positions sync, open orders, and the Refresh button |
 | `scripts/ibkr-gateway.ts`, `scripts/sync-ibkr.ts` | `npm run ibkr` (gateway status/sync) and `npm run sync:ibkr` (connector output → `trader/portfolio.json`) |
-| `app/api/*` | `analyze`, `quote`, `search`, `setups`, `research`, `congress`, `portfolio`, `ibkr` |
+| `app/api/*` | `analyze`, `quote`, `search`, `setups`, `research`, `congress`, `portfolio`, `ibkr`, `today`, `pulse`, `performance`, `status`, `desk` |
 | `lib/prep.ts`, `lib/today.ts`, `app/api/today/route.ts`, `app/today/page.tsx` | Today: suggested stops vs your IBKR stop orders, discounts, resting buy limits, the to-do list |
 | `lib/pulse.ts`, `app/api/pulse/route.ts`, `components/PortfolioPulse.tsx` | Main screen: winners, losers and why the portfolio is up or down |
 | `lib/performance.ts`, `app/api/performance/route.ts`, `components/AccountChart.tsx` | Main screen: account value chart from IBKR (NAV + time-weighted return) |
 | `lib/status.ts`, `lib/data/status.ts`, `app/api/status/route.ts`, `app/status/page.tsx` | Status: live health check of every connector |
+| `lib/desk.ts`, `lib/deskAgent.ts`, `lib/data/desk.ts`, `lib/data/deskRun.ts`, `lib/data/deskView.ts`, `app/api/desk/*`, `app/desk/page.tsx`, `components/DeskCharts.tsx` | Desk: Claude's paper trading desk: ledger, sizing, risk gate, fills from bars, the agent, P&L history and charts |
 | `tests/` | Node test runner suites (`npm test`) |
 
 ## Ticker page: everything for one stock
@@ -165,6 +167,22 @@ Without the gateway logged in, Dodona can't see your stops (say "refresh IBKR").
 
 The top of the page shows an overall health ring, a **Needs attention** list with the fix for each item, and a **Claude Code skills** grid. Each skill is Ready, Limited (an optional dependency is missing), Not set up or Broken, from what it depends on (`SKILL_DEPS` in `lib/status.ts`; a test fails if a skill folder has no entry). "Not set up" means optional and not configured. Every check only reads; turn on "every minute" to keep the page live.
 
+## Desk: Claude trades a paper account
+
+**/desk** is an agentic trading desk. Claude reads the charts and trades a **paper** account on its own, inside the rules in `trader/config.json` (budget, cash buffer, max loss per trade, daily loss limit, trades per day, entry window, flat-by time, stops required). It never sends an order to a broker: the point is to find out, with real prices and no real money, whether the approach makes money.
+
+Each run (**Run desk now**, or **Auto every 5 min** while the page is open):
+
+1. **Open positions** are replayed against real 5-minute bars since the entry: the stop (a gap fills at the open, and a bar that touches both counts as the stop), the target, the flat-by time for day trades, and a 20-session time stop for swing trades.
+2. **Scan.** While new entries are allowed, it scans a list of liquid stocks plus your watchlist for a fresh opening-range breakout (the last 15 minutes) and yesterday's daily setups (20-day breakout, bull flag, reclaimed 20-day average, oversold bounce), each with its track record on that stock. Stocks a whole share of which is over the position cap are skipped.
+3. **Decide.** With `ANTHROPIC_API_KEY` set, Claude (`DODONA_DESK_MODEL`, default `claude-opus-5-5`) gets each new setup's daily and 5-minute bars, indicators, support and resistance, the market, headlines and the next earnings date, plus the open positions. It answers buy or skip with a stop and target for each setup, and hold, raise the stop or close for each position, with its reasons. It's asked about a setup once, and re-reads open positions at most every 15 minutes. Without a key, the **rules engine** trades instead: it takes a setup only when that setup made money on that stock before and the market isn't in a downtrend, and moves stops to break-even at 1R.
+4. **Size and risk-check in code, after Claude.** Claude never picks the size and can't loosen a rule. Shares come from trader-budget's four limits (max loss, position cap, max order, cash after the buffer). Then the trader-risk day rules: stop below the entry, reward:risk minimum, entry window, trades per day, the daily loss limit (losses so far plus open risk), blocked tickers, one position per stock. A trade where the $0.70 round-trip commission would be more than 25% of what it risks is refused as too small. Stops only move up.
+5. **Book it.** Fills are at the live price (Yahoo) with 0.05% slippage and IBKR's $0.35 minimum commission each way.
+
+The page shows today's P&L, account value and cash at risk; win rate, profit factor, per-trade expectancy and R, green and red days, max drawdown and streak; an equity curve, daily P&L bars, a P&L calendar and how trades ended in R; open positions on a stop-to-target track; Claude's latest read of the market; a journal of every buy, sell, skip and blocked trade with the reason; results by setup and by who traded (Claude or rules); and the full trade history. The ledger is `trader/desk.json` (gitignored). **Reset paper account** starts over at your budget and keeps the old ledger as `trader/desk-<time>.json`.
+
+Runs happen only while the page is open; positions opened earlier are still closed correctly from the bars on the next run. Past paper results don't promise future ones.
+
 ## Congress trades (dashboard)
 
 The dashboard's **Congress trades** card reads the House Clerk's public STOCK Act reports the way `/trader-pelosi` does: the yearly index, then each Periodic Transaction Report PDF (read with pdf.js, cached once per report in `trader/state/congress/`). It shows trades in your holdings and watchlist, the members you track (Pelosi by default, editable), and the tickers the most members bought in the last 30 days. Amounts are ranges, owners matter (SP = spouse), and every row links to its PDF with how many days it took to disclose (over 45 is flagged). Fast, not early: these trades are days to weeks old. House only; paper filings with no text layer are counted, not parsed.
@@ -215,4 +233,4 @@ Dodona's own skills, in the same folder:
 - Earnings-calendar and ex-dividend alerts; SEC filings and reported quarters in the agent context
 - Congress trades for one stock on its ticker page; Senate reports
 - Orders through the IBKR gateway (e.g. "raise this stop" from Today), each one shown as a ticket and placed only on your explicit yes
-- Paper-trading ledger to grade the agents' and setups' live calls over time
+- Run the desk on a schedule (no open tab needed), and let it trade the IBKR paper account through the gateway, each order still yours to approve

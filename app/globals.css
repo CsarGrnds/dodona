@@ -256,3 +256,58 @@ ul.news li { margin-bottom: 4px; }
 @keyframes mbar-pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--c) 0%, transparent); } }
 @media (max-width: 560px) { .mbar-now { margin-left: 0; } }
 @media (prefers-reduced-motion: reduce) { .mbar-state i { animation: none !important; } }
+
+/* Agentic trading desk */
+.dk-hero { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; padding: 20px; --c: var(--accent); background: radial-gradient(120% 160% at 0% 0%, color-mix(in srgb, var(--c) 14%, transparent), transparent 60%), var(--panel); }
+.dk-hero.green { --c: var(--buy); }
+.dk-hero.red { --c: var(--sell); }
+.dk-hero-main { flex: 1; min-width: min(260px, 100%); display: grid; gap: 14px; }
+.dk-hero-side { display: grid; gap: 8px; justify-items: end; }
+.dk-today { display: flex; gap: 12px 36px; flex-wrap: wrap; }
+.dk-big { font-size: 30px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; }
+.dk-mid { font-size: 22px; font-weight: 600; line-height: 1.3; }
+.dk-auto { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; }
+.dk-banner { margin-top: 12px; padding: 10px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, #e8b84a 40%, transparent); background: color-mix(in srgb, #e8b84a 8%, transparent); font-size: 13px; line-height: 1.5; }
+.dk-banner code, .dk-rules code { font-family: var(--mono); font-size: 12px; }
+.dk-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: 10px; margin-top: 14px; }
+.dk-tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 3px; }
+.dk-tile-v { font-size: 19px; font-weight: 650; }
+.dk-plot { height: 220px; }
+.dk-empty { color: var(--muted); font-size: 13px; padding: 18px 4px; }
+.dk-cal-wrap { display: grid; gap: 6px; }
+.dk-cal { display: grid; grid-template-rows: repeat(5, 14px); grid-auto-flow: column; grid-auto-columns: 14px; gap: 3px; overflow-x: auto; }
+.dk-cal i, .dk-cal-key i { display: inline-block; width: 14px; height: 14px; border-radius: 3px; background: var(--panel-2); }
+.dk-cal-key { display: flex; align-items: center; gap: 3px; }
+.dk-cal i.z, .dk-cal-key i.z { background: color-mix(in srgb, var(--muted) 35%, var(--panel-2)); }
+.g1 { background: color-mix(in srgb, var(--buy) 30%, var(--panel-2)) !important; }
+.g2 { background: color-mix(in srgb, var(--buy) 50%, var(--panel-2)) !important; }
+.g3 { background: color-mix(in srgb, var(--buy) 75%, var(--panel-2)) !important; }
+.g4 { background: var(--buy) !important; }
+.r1 { background: color-mix(in srgb, var(--sell) 30%, var(--panel-2)) !important; }
+.r2 { background: color-mix(in srgb, var(--sell) 50%, var(--panel-2)) !important; }
+.r3 { background: color-mix(in srgb, var(--sell) 75%, var(--panel-2)) !important; }
+.r4 { background: var(--sell) !important; }
+.dk-rdist { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; height: 120px; align-items: end; }
+.dk-rcol { display: grid; grid-template-rows: auto 1fr auto; height: 100%; text-align: center; gap: 4px; }
+.dk-rcol > div { align-self: end; border-radius: 4px 4px 0 0; min-height: 2px; }
+.dk-rcol .pos { background: color-mix(in srgb, var(--buy) 70%, transparent); }
+.dk-rcol .neg { background: color-mix(in srgb, var(--sell) 70%, transparent); }
+.dk-read { display: flex; gap: 10px; margin: 12px 0; padding: 12px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 7%, var(--panel-2)); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); font-size: 13px; line-height: 1.5; }
+.dk-read-icon { color: var(--accent); font-size: 18px; }
+.dk-positions { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 10px; margin-top: 10px; }
+.dk-pos { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 8px; }
+.dk-sym { font-weight: 700; font-size: 15px; }
+.dk-track { position: relative; height: 8px; border-radius: 4px; background: linear-gradient(90deg, color-mix(in srgb, var(--sell) 35%, transparent), color-mix(in srgb, var(--buy) 35%, transparent)); }
+.dk-track-fill { position: absolute; inset: 0 auto 0 0; border-right: 3px solid var(--text); border-radius: 4px 0 0 4px; }
+.dk-track-entry { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--muted); }
+.dk-thesis { color: var(--muted); line-height: 1.45; }
+.dk-feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: 520px; overflow-y: auto; }
+.dk-feed li { display: flex; gap: 10px; }
+.dk-feed-icon { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
+.dk-feed-icon.ok { color: var(--buy); border-color: color-mix(in srgb, var(--buy) 50%, transparent); }
+.dk-feed-icon.act { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.dk-feed-icon.bad { color: var(--sell); border-color: color-mix(in srgb, var(--sell) 50%, transparent); }
+.dk-setups { display: grid; gap: 6px; }
+.dk-rules { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--muted); }
+.dk-rules b { color: var(--text); }
+@media (max-width: 560px) { .dk-hero-side { justify-items: start; } .dk-big { font-size: 24px; } .dk-positions { grid-template-columns: 1fr; } }
