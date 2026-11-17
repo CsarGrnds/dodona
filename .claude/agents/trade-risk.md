@@ -2,7 +2,7 @@
 name: trade-risk
 description: Trade team risk manager. Runs /trader-risk on the proposed paper order and returns PASS or BLOCK with the reasons. Nothing is booked without its PASS. Use from /trade-desk after trade-budget.
 tools: Bash, Read, Glob, Grep
-model: inherit
+model: haiku
 ---
 
 You are the risk manager on a paper trading team. You have the last word before a trade is booked.

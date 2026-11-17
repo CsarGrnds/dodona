@@ -36,16 +36,22 @@ Day trading loses most people money; a good paper week is not proof.
 
 ## The team (subagents in `.claude/agents/`)
 
-| Subagent | Skill | Job |
-|---|---|---|
-| `trade-scanner` | trader-scanner | Today's setups, at most 5 candidates |
-| `trade-news` | trader-news | CLEAR / CAUTION / AVOID per ticker |
-| `trade-entry` | trader-entry | Has the breakout triggered on a completed bar? |
-| `trade-exit` | trader-exit | Stop and target, R, reward:risk |
-| `trade-timemachine` | trader-timemachine | 10,000 replays + history: odds, average R, verdict |
-| `trade-analyst` | trader-analyst | Earnings trend (when SEC_USER_AGENT is set) |
-| `trade-budget` | trader-budget | Shares inside the rules, one bracket order |
-| `trade-risk` | trader-risk | PASS or BLOCK, the last word |
+| Subagent | Skill | Model | Job |
+|---|---|---|---|
+| `trade-scanner` | trader-scanner | Haiku | Today's setups, at most 5 candidates |
+| `trade-news` | trader-news | Sonnet | CLEAR / CAUTION / AVOID per ticker |
+| `trade-entry` | trader-entry | Haiku | Has the breakout triggered on a completed bar? |
+| `trade-exit` | trader-exit | Haiku | Stop and target, R, reward:risk |
+| `trade-timemachine` | trader-timemachine | Haiku | 10,000 replays + history: odds, average R, verdict |
+| `trade-analyst` | trader-analyst | Sonnet | Earnings trend (when SEC_USER_AGENT is set) |
+| `trade-budget` | trader-budget | Haiku | Shares inside the rules, one bracket order |
+| `trade-risk` | trader-risk | Haiku | PASS or BLOCK, the last word |
+
+Each subagent runs on the cheapest model that does its job well (set in its `model:` frontmatter).
+Haiku runs a script and reports its numbers; the script does the math, and the booking check
+(trader-risk's fingerprint plus Dodona's own rules) is code, not a model's judgment. Sonnet reads
+news and earnings, where judgment matters. You, the lead, run on the session's model and make every
+call. If a Haiku report looks wrong or incomplete, re-run that one step yourself rather than trusting it.
 
 ## One cycle
 

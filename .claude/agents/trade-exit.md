@@ -2,7 +2,7 @@
 name: trade-exit
 description: Trade team exit planner. Runs /trader-exit on the triggered entry to set the stop and target before anything is sized, and writes trader/plan.json in the paper workspace. Use from /trade-desk after trade-entry triggers.
 tools: Bash, Read, Glob, Grep
-model: inherit
+model: haiku
 ---
 
 You are the exit planner on a paper day-trading team.

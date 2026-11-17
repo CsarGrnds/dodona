@@ -182,7 +182,7 @@ export async function runChecks(): Promise<StatusCheck[]> {
       const budget = typeof cfg.budget === "number" ? `budget $${cfg.budget.toLocaleString()}` : "no budget";
       return { state: typeof cfg.budget === "number" ? "ok" : "warn", detail: `${keys.length} settings, ${budget}${cfg.sec_user_agent ? ", SEC contact set" : ""}`, fix: typeof cfg.budget === "number" ? undefined : "Say “set my rules” to add a budget." };
     }),
-    timed({ key: "broker-mcp", group: "Skills", name: "Order broker (Alpaca MCP)", usedBy: "/trader-broker: sending approved orders" }, async () => {
+    timed({ key: "broker-mcp", group: "Skills", name: "Order broker (Alpaca MCP, optional)", usedBy: "/trader-broker only: sending real orders through Alpaca" }, async () => {
       // Only server names and the paper flag are read; API keys are never read out or shown.
       const file = join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json");
       let servers: Record<string, { env?: Record<string, string> }> = {};
@@ -192,7 +192,8 @@ export async function runChecks(): Promise<StatusCheck[]> {
         /* no desktop config */
       }
       const name = Object.keys(servers).find((k) => /alpaca/i.test(k));
-      if (!name) return { state: "off", detail: "No Alpaca server in Claude Desktop: /trader-broker can build tickets but not send them", fix: "In Claude Code say “connect Alpaca” (paper trading keys, set up in Claude Desktop's config)." };
+      // Optional: Dodona reads IBKR (read-only) and its desk and trade team trade on paper without any broker.
+      if (!name) return { state: "off", detail: "Optional, not needed with IBKR. Only /trader-broker uses it, to send real orders through Alpaca. Dodona's desk and the trade team trade on paper without it." };
       const paper = String(servers[name].env?.ALPACA_PAPER_TRADE ?? "true").toLowerCase() !== "false";
       return { state: paper ? "ok" : "warn", detail: `“${name}” configured, ${paper ? "paper trading" : "LIVE trading"}`, fix: paper ? undefined : "Live trading is on: every order still needs your explicit yes." };
     }),

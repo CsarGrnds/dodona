@@ -2,7 +2,43 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { newDesk, openPosition } from "../lib/desk";
 import { acceptTeamOrder, brokerState, orderFingerprint, paperPortfolio } from "../lib/data/paper";
-import { projectSlug, stepsFrom } from "../lib/data/transcripts";
+import { firstPrompt, isSessionId, projectSlug, stepsFrom, teamModels, usageFrom } from "../lib/data/transcripts";
+
+test("any Claude Code session: its first prompt as the title, and only real session ids", () => {
+  const head = [
+    JSON.stringify({ timestamp: "2026-11-17T10:00:00Z", type: "summary" }),
+    JSON.stringify({ timestamp: "2026-11-17T10:00:01Z", message: { role: "user", content: "<command-name>/clear</command-name>" } }),
+    JSON.stringify({ timestamp: "2026-11-17T10:00:02Z", message: { role: "user", content: [{ type: "text", text: "<system-reminder>x</system-reminder> run the trade desk" }] } }),
+  ].join("\n");
+  assert.deepEqual(firstPrompt(head), { title: "run the trade desk", startedAt: "2026-11-17T10:00:00Z" });
+  assert.ok(isSessionId("a57fdd65-2c13-4278-be31-ff222ab21811"));
+  assert.ok(!isSessionId("../../etc/passwd"));
+  const { steps } = stepsFrom([{ timestamp: "2026-11-17T10:00:03Z", message: { role: "assistant", content: [{ type: "tool_use", id: "t", name: "mcp__Claude_Browser__read_page", input: {} }] } }], "lead");
+  assert.equal(steps[0].title, "Claude Browser · read page");
+});
+
+test("each specialist runs on a model sized to its job", async () => {
+  const m = await teamModels();
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(m).sort()),
+    { "trade-analyst": "sonnet", "trade-budget": "haiku", "trade-entry": "haiku", "trade-exit": "haiku", "trade-news": "sonnet", "trade-risk": "haiku", "trade-scanner": "haiku", "trade-timemachine": "haiku" },
+  );
+});
+
+test("usage: tokens and API cost per agent, one response counted once", () => {
+  const msg = (id: string, model: string, usage: Record<string, unknown>) => ({ timestamp: "2026-11-16T15:00:00Z", message: { role: "assistant", id, model, usage, content: [] } });
+  const opus = usageFrom([
+    msg("m1", "claude-opus-5-5", { input_tokens: 1000, output_tokens: 1000, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 2000, cache_creation: { ephemeral_1h_input_tokens: 2000 } }),
+    msg("m1", "claude-opus-5-5", { input_tokens: 1000, output_tokens: 1000, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 2000, cache_creation: { ephemeral_1h_input_tokens: 2000 } }),
+  ])!;
+  // 1000×$4 + 10,000×$0.40 + 2000×$8 (1-hour write) + 1000×$20, per million
+  assert.equal(opus.calls, 1);
+  assert.equal(opus.costUsd, 0.044);
+  const haiku = usageFrom([msg("h1", "claude-haiku-5-5", { input_tokens: 1000, output_tokens: 1000, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 2000, cache_creation: { ephemeral_1h_input_tokens: 2000 } })])!;
+  assert.equal(haiku.costUsd, 0.0011);
+  assert.equal(usageFrom([msg("x", "claude-unknown-9", { input_tokens: 5, output_tokens: 5 })])!.costUsd, undefined);
+  assert.equal(usageFrom([]), undefined);
+});
 
 const ORDER = {
   symbol: "TSLA", side: "buy", qty: "8", type: "market", time_in_force: "day", order_class: "bracket",

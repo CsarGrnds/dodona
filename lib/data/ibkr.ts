@@ -1,7 +1,8 @@
 // Server only: Interactive Brokers Client Portal Gateway (read-only).
 // The gateway is IBKR's own small Java app that runs on this machine; you log in to it in the
-// browser once a day and it serves IBKR's Web API on localhost. Dodona only reads: accounts,
-// positions and the account summary. Nothing here places, changes or cancels orders.
+// browser once a day and it serves IBKR's Web API on localhost. This file only reads: accounts,
+// positions, the account summary, orders. Nothing here places, changes or cancels orders: that is
+// lib/data/ibkrOrders.ts alone, behind its gates (see there).
 //
 //   IBKR_GATEWAY_URL  default https://localhost:5001 (macOS AirPlay Receiver already uses 5000)
 //   IBKR_ACCOUNT      optional account id; the first account otherwise
@@ -33,7 +34,8 @@ export class GatewayError extends Error {
   }
 }
 
-function call<T>(method: "GET" | "POST", path: string, timeoutMs = 10_000, body?: unknown): Promise<T> {
+/** Exported only for lib/data/ibkrOrders.ts. */
+export function call<T>(method: "GET" | "POST", path: string, timeoutMs = 10_000, body?: unknown): Promise<T> {
   const base = gatewayUrl();
   const payload = body === undefined ? "" : JSON.stringify(body);
   return new Promise((resolve, reject) => {
@@ -80,7 +82,7 @@ export async function gatewayStatus(): Promise<GatewayStatus> {
   }
 }
 
-async function accountId(): Promise<string> {
+export async function accountId(): Promise<string> {
   const accts = await call<Array<{ id?: string; accountId?: string }>>("GET", "/v1/api/portfolio/accounts");
   const ids = (Array.isArray(accts) ? accts : []).map((a) => a.accountId ?? a.id).filter((x): x is string => !!x);
   const want = process.env.IBKR_ACCOUNT?.trim();
