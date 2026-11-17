@@ -68,7 +68,7 @@ npm run dev                     # http://localhost:3000
 | `npm run ibkr -- status \| sync \| where` | IBKR gateway: is it logged in, sync positions, where it's installed |
 | `npm run sync:ibkr` | Turn the IBKR connector's saved output into `trader/portfolio.json` |
 | `npm run demo:portfolio` | Write a fictional portfolio at today's prices (`docs/demo/portfolio.json`) |
-| `npm run desk -- prep \| status \| book \| stop \| close \| log \| session start\|end \| driver` | The paper desk from the command line, for the `/trade-desk` team (JSON out) |
+| `npm run desk -- prep \| status \| book \| stop \| close \| log \| session start\|end \| driver \| stage add\|list\|drop\|done\|clear` | The paper desk from the command line, for the `/trade-desk` team (JSON out) |
 | `npm run screenshots` | Capture the README screenshots from a running demo server (the `dodona-demo` launch config); it refuses to run against a real portfolio |
 
 Check changes with real market data. `DODONA_MOCK=1 npm run dev` (synthetic data) is only for working offline.
@@ -169,7 +169,7 @@ Without the gateway logged in, Dodona can't see your stops (say "refresh IBKR").
 - **Market data:** Yahoo quotes, daily bars, 5-minute bars, fundamentals and news, plus the Google Finance price fallback.
 - **Research:** SEC EDGAR (needs `SEC_USER_AGENT`) and the House Clerk's disclosure index.
 - **AI:** the Anthropic API key and model, validated by listing models, which costs nothing.
-- **Skills:** everything the Claude Code skills reach: Python 3, Yahoo's chart API and headline feed (direct, with the skills' User-Agent), Nasdaq Trader's symbol lists, Yahoo's backup host (query1), `pdftotext`, `trader/config.json`, the Alpaca MCP server in Claude Desktop (server name and paper flag only, never keys), and when `/dodona-sync` last used the IBKR connector. Stooq isn't checked: it shut down its free CSV quotes, and `/trader-alerts` only used it with `--source stooq` (Yahoo is the default).
+- **Skills:** everything the Claude Code skills reach: Python 3, Yahoo's chart API and headline feed (direct, with the skills' User-Agent), Nasdaq Trader's symbol lists, Yahoo's backup host (query1), `pdftotext`, `trader/config.json`, your order broker (with IBKR: whether the Desk's IBKR order panel is on and the gateway can take orders; with Alpaca: its MCP server in Claude Desktop, server name and paper flag only, never keys), and when `/dodona-sync` last used the IBKR connector. Stooq isn't checked: it shut down its free CSV quotes, and `/trader-alerts` only used it with `--source stooq` (Yahoo is the default).
 - **Local:** NYSE holiday calendar coverage and the synced portfolio file.
 
 The top of the page shows an overall health ring, a **Needs attention** list with the fix for each item, and a **Claude Code skills** grid. Each skill is Ready, Limited (an optional dependency is missing), Not set up or Broken, from what it depends on (`SKILL_DEPS` in `lib/status.ts`; a test fails if a skill folder has no entry). "Not set up" means optional and not configured. Every check only reads; turn on "every minute" to keep the page live.
@@ -262,17 +262,25 @@ Dodona's own skills, in the same folder:
 
 Values are checked as you type, across fields too (a day's loss limit can't be under one trade's, entries end before the flat-by time). Nothing is silently replaced. Saving keeps every other key in the file, leaves the previous version in `trader/config.prev.json`, and updates the trade team's paper workspace. The safety switches (paper, margin, short selling, options) are shown but can only be changed by you, in the file. `/api/settings` answers only localhost, and its save refuses requests from other websites.
 
-## IBKR orders: ready for when you trade (off by default)
+## IBKR orders: the morning batch (off by default)
 
-The Desk's **IBKR order** panel is `/trader-broker`'s job, for Interactive Brokers. It takes the one bracket order in `trader/orders.json` (from `/trader-budget` and `/trader-risk`, run from the repo root against your real portfolio). It sends it through the local Client Portal Gateway as a real IBKR bracket: a buy with a stop-loss and a take-profit that cancel each other and wait at IBKR. Every gate:
+Real trades work like this: **the team prepares, you approve once, IBKR waits for the breakout.**
+
+1. **9:50–10:30 AM New York, in Claude Code: `/trade-desk live`.** The team runs from the repo root against your real portfolio and rules. Scanner and News pick candidates whose opening range hasn't broken yet. Entry, Exit plan and Time Machine plan each one ahead, with the range high as the trigger. Budget sizes it, and `npm run desk -- stage add` stages it as a **buy-stop**. Then `stage done` writes the batch to `trader/orders.json`, and trader-risk checks it all together against your daily loss limit.
+2. **You approve it once**, on the Desk's **IBKR orders** panel. It shows every ticket, their total risk, and IBKR's preview of each (cost, commission, warnings; it places nothing). You type the batch (`8 TSLA, 5 F`) and click **Place**.
+3. **IBKR does the waiting.** Each order sits at IBKR and buys only if its price trades at the trigger, with no delay. Its stop-loss and take-profit are attached, and a sell at the close (MOC) keeps day trades from staying open overnight. Untriggered orders end at the close, and **Cancel unfilled** drops them sooner; filled positions keep their stop and target.
+
+Every gate, every time:
 
 1. **Off until you turn it on:** Settings → Broker: Interactive Brokers, and **Send orders to IBKR**.
-2. **Paper first:** while Paper trading is on (the default), it only sends to an IBKR paper account (DU…). Log in to the gateway with your paper login. Going live means setting `"paper": false` yourself, in `trader/config.json`; the page never does it.
-3. **trader-risk PASSED this exact order** (same fingerprint) in the last 15 minutes, while the market is open, and it was never sent before.
-4. **Your yes:** **Preview at IBKR** shows IBKR's what-if (cost, commission, warnings) and places nothing. Then you type the quantity and symbol (`8 TSLA`) and click **Place**. Only a click on Dodona's page can place it: scripts, other websites and Claude are refused.
-5. **IBKR's own questions** (market data warnings, price caps…) come back to you, one by one, to confirm or cancel.
+2. **Paper until you say otherwise:** while Paper trading is on (the default), it only sends to an IBKR paper account (DU…). Real money means setting `"paper": false` yourself, in `trader/config.json`; the page never does it.
+3. **trader-risk PASSED every order** (same fingerprints) in the last 15 minutes, together within your daily loss limit, while the market is open, and none was sent before.
+4. **Never a stock you already hold**, so a day trade's sell can't touch shares you keep. On a cash account, IBKR also refuses to sell shares you don't have.
+5. **Fees at most 25% of the risk.** IBKR charges at least $1.00 each way, so a trade risking $3.90 is refused (about $2 in fees).
+6. **Your yes:** only a typed confirmation and a click on Dodona's page can place orders. Scripts, other websites and Claude are refused. Nothing scheduled ever places one.
+7. **IBKR's own questions** (market data warnings, price caps…) come back to you to confirm or skip, one by one.
 
-Each step is logged to `trader/state/broker.json` in `/trader-broker`'s format, so `/trader-risk` counts what was placed against your daily limits. A placed order's `orders.json` is renamed so it can't be sent again. The panel also shows today's working orders and fills at IBKR (read-only). Not yet: selling to flatten from the panel (cancel the bracket's children, then sell), and the trade team sending its paper picks to the IBKR paper account.
+Each step is logged to `trader/state/broker.json` in `/trader-broker`'s format, so `/trader-risk` counts what was placed against your daily limits. A sent batch's `orders.json` is renamed so it can't be sent twice. The panel also shows today's working orders and fills at IBKR (read-only). Not yet: moving a live stop up from the panel.
 
 ## Trade team: Claude Code runs the real skills, Dodona shows it
 

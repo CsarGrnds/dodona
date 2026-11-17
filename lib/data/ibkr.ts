@@ -35,7 +35,7 @@ export class GatewayError extends Error {
 }
 
 /** Exported only for lib/data/ibkrOrders.ts. */
-export function call<T>(method: "GET" | "POST", path: string, timeoutMs = 10_000, body?: unknown): Promise<T> {
+export function call<T>(method: "GET" | "POST" | "DELETE", path: string, timeoutMs = 10_000, body?: unknown): Promise<T> {
   const base = gatewayUrl();
   const payload = body === undefined ? "" : JSON.stringify(body);
   return new Promise((resolve, reject) => {

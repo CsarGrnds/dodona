@@ -107,6 +107,46 @@ All commands from the repo root. Every `npm run desk` command prints JSON.
    ```
    If something broke, end with `--status error` and say what.
 
+## LIVE MORNING mode (`/trade-desk live`): the real-account batch
+
+When the user asks for the live morning run (`/trade-desk live`, "prepare today's real orders"),
+you prepare the day's REAL trades for the user to approve once. You still never place, approve or
+send an order: the user does that by hand in Dodona's IBKR panel, and the orders then wait at IBKR
+as buy-stops (each buys only if its breakout triggers, with its stop, target and a sell at the close).
+
+- Run it once, after the opening range: between 9:50 and 10:30 AM New York time. Outside that
+  window, say so and stop.
+- Skills run from the **repo root** (the real portfolio and rules). Tell every subagent, in its
+  prompt: **"LIVE MORNING: run from the repo root."** Never edit `trader/config.json`, and never
+  touch `"paper"`.
+- Skip any stock the user already holds (`trader/portfolio.json`): Dodona refuses them, so a day
+  trade's sell can never touch shares they keep.
+- Skip trades too small to pay for themselves: IBKR charges at least $1.00 each way, and Dodona
+  refuses a trade whose fees (about $2 in and out) are over 25% of its max loss, so the max loss must
+  be at least about $8.
+
+1. `npm run desk -- session start --trigger "LIVE MORNING: today's real-account batch"`, then
+   `npm run desk -- stage clear`.
+2. `trade-scanner` (ORB scan) → `trade-news` on its candidates; drop AVOIDs. Log both.
+3. For the best candidates, one at a time, at most the trades left today (`max_trades_per_day`):
+   1. `trade-entry`: the opening range must be formed and NOT yet broken (WAITING). Its range high
+      is the trigger. Already TRIGGERED means the move started without us: skip it.
+   2. `trade-exit` with a plan-ahead entry at the trigger: `exit.py plan --from trader/entry.json
+      --entry <TRIGGER> --write --json`.
+   3. `trade-timemachine` on that plan. Your call, logged with the numbers; skip coin flips and
+      negative averages.
+   4. `trade-budget` (sizes at the trigger), then stage it:
+      `npm run desk -- stage add --thesis "<1-2 sentences with the numbers>"`.
+4. `npm run desk -- stage done` (writes the batch to `trader/orders.json`), then `trade-risk` on the
+   whole batch: it adds the losses together against the daily limit.
+   - Every order must PASS. For a BLOCK: `npm run desk -- stage drop --symbol X`, `stage done`
+     again, and `trade-risk` again.
+5. Log the result and end the session. Say how many orders are ready, their total max loss, and
+   that the user approves them in Dodona (Desk → IBKR orders) within 15 minutes of the risk
+   check. If PushNotification is available, notify the user with the same one line.
+
+Never run this from `/loop` or a schedule: it ends with the user, not with you.
+
 ## Running it all day
 
 `/loop 15m /trade-desk` between 9:45 AM and 3:30 PM New York time runs a cycle every 15 minutes;

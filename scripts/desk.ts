@@ -10,7 +10,9 @@
 //   npm run desk -- log --agent scanner --title "…" [--text "…"]   add a step to it
 //   npm run desk -- session end --summary "…" [--status done|error]
 //   npm run desk -- driver team|auto             who makes entries: the team, or Dodona's own desk
-import { rename, readFile } from "node:fs/promises";
+//   npm run desk -- stage add [--trigger P] | list | drop | done | clear   REAL account: stage the morning batch
+import { rename, readFile, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { marketStatus, nextBell } from "../lib/clock";
 import {
   buyFill,
@@ -189,6 +191,50 @@ async function main() {
         const kind = (flag("kind") ?? "text") as "text" | "decision" | "error";
         sess!.steps.push({ at, kind: ["text", "decision", "error"].includes(kind) ? kind : "text", agent: flag("agent") ?? "lead", title: flag("title") ?? "Note", detail: flag("text") });
         result = { ok: true, steps: sess!.steps.length };
+        break;
+      }
+
+      case "stage": {
+        // The real-account morning batch (repo root trader/, NOT the paper workspace): collect each
+        // candidate's trader-budget order as a buy-stop at its plan's entry, then hand trader-risk one
+        // batch. Nothing here talks to a broker: you approve and place the batch in Dodona's IBKR panel.
+        const real = (p: string) => resolve(process.cwd(), "trader", p);
+        const readJson = async (p: string) => JSON.parse(await readFile(p, "utf8").catch(() => "null"));
+        const staged: Array<Record<string, unknown>> = (await readJson(real("staged.json")))?.orders ?? [];
+        const save = (orders: unknown[]) => writeFile(real("staged.json"), JSON.stringify({ orders, updated_at: at }, null, 2) + "\n");
+        const brief = (o: Record<string, unknown>) => ({ symbol: o.symbol, qty: o.qty, trigger: o.stop_price, stop: o.stop_loss_stop_price, target: o.take_profit_limit_price, max_loss: (o.plan as Record<string, unknown>)?.max_loss });
+        if (sub === "add") {
+          const doc = await readJson(real("orders.json"));
+          const orders = (doc?.orders ?? []) as Array<Record<string, unknown>>;
+          if (orders.length !== 1) fail(`trader/orders.json has ${orders.length} orders; run /trader-budget --write for one candidate first`);
+          const o = { ...orders[0] };
+          const plan = (o.plan ?? {}) as Record<string, unknown>;
+          if (String(o.side).toLowerCase() !== "buy" || o.order_class !== "bracket") fail("only a buy bracket (stop-loss and take-profit) can be staged");
+          const trigger = Number(flag("trigger") ?? plan.entry);
+          if (!(trigger > Number(o.stop_loss_stop_price) && trigger < Number(o.take_profit_limit_price))) fail("the trigger must sit between the stop and the target");
+          const sym = String(o.symbol).toUpperCase();
+          if (staged.some((x) => String(x.symbol).toUpperCase() === sym)) fail(`${sym} is already staged`);
+          Object.assign(o, { type: "stop", stop_price: trigger.toFixed(2), time_in_force: "day" });
+          o.plan = { ...plan, entry: trigger, style: flag("style") ?? plan.style ?? "day", thesis: flag("thesis") ?? plan.thesis };
+          staged.push(o);
+          await save(staged);
+          result = { ok: true, staged: staged.map(brief), next: "stage the next candidate, or `npm run desk -- stage done` and then /trader-risk" };
+        } else if (sub === "list") {
+          result = { staged: staged.map(brief) };
+        } else if (sub === "done") {
+          if (!staged.length) fail("nothing staged");
+          await writeFile(real("orders.json"), JSON.stringify({ created_by: "dodona stage", created_at: at, status: "proposed", orders: staged }, null, 2) + "\n");
+          result = { ok: true, batch: staged.map(brief), next: "run /trader-risk (check.py --json) on trader/orders.json; then the user approves the batch in Dodona's IBKR panel" };
+        } else if (sub === "drop") {
+          const sym = (flag("symbol") ?? "").toUpperCase();
+          const left = staged.filter((x) => String(x.symbol).toUpperCase() !== sym);
+          if (left.length === staged.length) fail(`${sym} isn't staged`);
+          await save(left);
+          result = { ok: true, staged: left.map(brief), next: "`npm run desk -- stage done` again, then /trader-risk again" };
+        } else if (sub === "clear") {
+          await save([]);
+          result = { ok: true, staged: [] };
+        } else fail("stage add|list|drop|done|clear");
         break;
       }
 

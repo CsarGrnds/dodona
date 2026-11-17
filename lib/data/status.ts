@@ -39,7 +39,7 @@ export async function runChecks(): Promise<StatusCheck[]> {
           ? { state: "warn", detail: `Running at ${gw.url} but not logged in`, fix: gwFix }
           : { state: "fail", detail: gw.message ?? `Not reachable at ${gw.url}`, fix: gwFix },
     ),
-    timed({ key: "ibkr-session", group: "Broker", name: "IBKR trading session", usedBy: "Reading orders (Dodona never places them)" }, async () => {
+    timed({ key: "ibkr-session", group: "Broker", name: "IBKR trading session", usedBy: "Reading orders; placing them only from the Desk's IBKR panel, on your click" }, async () => {
       if (!gwReady) return needGw();
       const a = await gatewayAuth();
       if (a.competing) return { state: "warn", detail: "Competing session: another IBKR login (TWS, Mobile or the web portal) holds the brokerage session", fix: "Log out of the other session, or log in to the gateway again." };
@@ -99,7 +99,7 @@ export async function runChecks(): Promise<StatusCheck[]> {
     // ---- Research
     timed({ key: "sec", group: "Research", name: "SEC EDGAR", usedBy: "Ticker page filings and earnings · /trader-analyst · /trader-news (8-Ks)" }, async () => {
       const ua = await secUserAgent();
-      if (!ua) return { state: "off", detail: "No SEC_USER_AGENT set: SEC panels are off", fix: "Add SEC_USER_AGENT=\"Your Name you@example.com\" to .env.local (Dodona) and \"sec_user_agent\" to trader/config.json (skills). The SEC requires a contact." };
+      if (!ua) return { state: "off", detail: "No SEC contact set: SEC panels are off", fix: "Settings → Stocks → SEC contact: your name and email (the SEC requires one). Dodona and the skills both use it." };
       const res = await fetch("https://data.sec.gov/submissions/CIK0000320193.json", { headers: { "User-Agent": ua, Accept: "application/json" }, cache: "no-store" });
       return res.ok ? { state: "ok", detail: "Filings index reachable (AAPL)" } : { state: "fail", detail: `HTTP ${res.status}`, fix: res.status === 403 ? "SEC refused the User-Agent: use a real name and email." : undefined };
     }),
@@ -180,10 +180,20 @@ export async function runChecks(): Promise<StatusCheck[]> {
       }
       const keys = Object.keys(cfg);
       const budget = typeof cfg.budget === "number" ? `budget $${cfg.budget.toLocaleString()}` : "no budget";
-      return { state: typeof cfg.budget === "number" ? "ok" : "warn", detail: `${keys.length} settings, ${budget}${cfg.sec_user_agent ? ", SEC contact set" : ""}`, fix: typeof cfg.budget === "number" ? undefined : "Say “set my rules” to add a budget." };
+      return { state: typeof cfg.budget === "number" ? "ok" : "warn", detail: `${keys.length} settings, ${budget}${cfg.sec_user_agent && !String(cfg.sec_user_agent).includes("you@example.com") ? ", SEC contact set" : ", no SEC contact"}`, fix: typeof cfg.budget === "number" ? undefined : "Say “set my rules” to add a budget." };
     }),
-    timed({ key: "broker-mcp", group: "Skills", name: "Order broker (Alpaca MCP, optional)", usedBy: "/trader-broker only: sending real orders through Alpaca" }, async () => {
-      // Only server names and the paper flag are read; API keys are never read out or shown.
+    timed({ key: "broker-mcp", group: "Skills", name: "Order broker", usedBy: "Real orders: the Desk's IBKR panel, or /trader-broker with Alpaca" }, async () => {
+      // Your broker comes from trader/config.json ("broker"). With IBKR, Alpaca isn't checked at all.
+      const cfg = await readFile(join(process.cwd(), "trader", "config.json"), "utf8").then(JSON.parse).catch(() => ({}) as Record<string, unknown>);
+      if (String(cfg.broker ?? "").toLowerCase() === "ibkr") {
+        if (cfg.ibkr_orders !== true) return { state: "ok", detail: "Interactive Brokers. Sending orders from Dodona is off until you turn it on in Settings; the desk and the trade team trade on paper." };
+        if (!gwReady) return { state: "warn", detail: "Interactive Brokers, orders on, but the gateway isn't logged in", fix: gwFix };
+        const paperOnly = cfg.paper !== false;
+        const live = gw.account && !/^D/i.test(gw.account);
+        if (paperOnly && live) return { state: "warn", detail: "Interactive Brokers, orders on (paper only), but the gateway is logged in to a live account, so nothing can be placed", fix: "Log in to the gateway with your IBKR paper username (DU…) to place paper orders." };
+        return { state: "ok", detail: `Interactive Brokers, orders on: ${live ? "LIVE" : "paper"} account …${(gw.account ?? "").slice(-3)}, placed only on your click in the Desk` };
+      }
+      // Alpaca: only server names and the paper flag are read; API keys are never read out or shown.
       const file = join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json");
       let servers: Record<string, { env?: Record<string, string> }> = {};
       try {
@@ -193,7 +203,7 @@ export async function runChecks(): Promise<StatusCheck[]> {
       }
       const name = Object.keys(servers).find((k) => /alpaca/i.test(k));
       // Optional: Dodona reads IBKR (read-only) and its desk and trade team trade on paper without any broker.
-      if (!name) return { state: "off", detail: "Optional, not needed with IBKR. Only /trader-broker uses it, to send real orders through Alpaca. Dodona's desk and the trade team trade on paper without it." };
+      if (!name) return { state: "off", detail: "Broker is Alpaca, but no Alpaca server is set up in Claude Desktop: /trader-broker can build tickets but not send them", fix: "Using IBKR? Set the broker to Interactive Brokers in Settings. Otherwise say “connect Alpaca” in Claude Code." };
       const paper = String(servers[name].env?.ALPACA_PAPER_TRADE ?? "true").toLowerCase() !== "false";
       return { state: paper ? "ok" : "warn", detail: `“${name}” configured, ${paper ? "paper trading" : "LIVE trading"}`, fix: paper ? undefined : "Live trading is on: every order still needs your explicit yes." };
     }),

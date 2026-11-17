@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { confirmMatches, confirmPhrase, ibkrBracket, ibkrMoney, ibkrWarning, isPaperAccount, nyIso, parsePlaceAnswer, ticketLines } from "../lib/ibkrOrder";
+import { confirmMatches, confirmPhrase, ibkrBracket, ibkrMoney, ibkrWarning, isPaperAccount, maxLossOf, nyIso, parsePlaceAnswer, ticketLines } from "../lib/ibkrOrder";
 import { validateRules } from "../lib/settings";
 
 const PLAN = { symbol: "TSLA", qty: 8, stop: 358.32, target: 370.04, entry: 364.18 };
@@ -10,7 +10,8 @@ test("ibkr: trader-budget's bracket becomes a parent buy and two linked children
   assert.deepEqual(buy, { acctId: "DU1234567", conid: 76792991, quantity: 8, tif: "DAY", outsideRTH: false, cOID: "dodona-abc", side: "BUY", orderType: "MKT" });
   assert.deepEqual([tp.parentId, tp.side, tp.orderType, tp.price, tp.quantity], ["dodona-abc", "SELL", "LMT", 370.04, 8]);
   assert.deepEqual([sl.parentId, sl.side, sl.orderType, sl.price, sl.quantity], ["dodona-abc", "SELL", "STP", 358.32, 8]);
-  assert.notEqual(tp.cOID, sl.cOID);
+  assert.equal(tp.cOID, undefined, "IBKR: children of a bracket carry no cOID");
+  assert.equal(sl.cOID, undefined);
   const [lim] = ibkrBracket({ ...PLAN, limit: 364 }, "DU1", 1, "x");
   assert.deepEqual([lim.orderType, lim.price], ["LMT", 364]);
   assert.throws(() => ibkrBracket({ ...PLAN, qty: 2.5 }, "DU1", 1, "x"), /whole shares/);
@@ -59,4 +60,36 @@ test("ibkr: money and warnings as IBKR's what-if writes them (seen live)", () =>
   assert.equal(ibkrMoney("1,234.50 USD"), 1234.5);
   assert.equal(ibkrMoney(undefined), undefined);
   assert.equal(ibkrWarning("20/You are trying to submit an order without having market data for this instrument. \nIB strongly recommends"), "You are trying to submit an order without having market data for this instrument. IB strongly recommends");
+});
+
+test("ibkr: a buy-stop entry waits for the breakout, with a sell at the close", () => {
+  const plan = { ...PLAN, trigger: 364.18, closeAtEnd: true };
+  const orders = ibkrBracket(plan, "U1", 7, "dodona-x");
+  assert.deepEqual(orders.map((o) => [o.side, o.orderType, o.price, o.parentId]), [
+    ["BUY", "STP", 364.18, undefined],
+    ["SELL", "LMT", 370.04, "dodona-x"],
+    ["SELL", "STP", 358.32, "dodona-x"],
+    ["SELL", "MOC", undefined, "dodona-x"],
+  ]);
+  assert.equal(maxLossOf({ ...PLAN, trigger: 365 }), 53.44); // measured from the higher trigger
+  assert.throws(() => ibkrBracket({ ...PLAN, trigger: 371 }, "U1", 1, "x"), /trigger/);
+  assert.throws(() => ibkrBracket({ ...PLAN, trigger: 364, limit: 364 }, "U1", 1, "x"), /not both/);
+  assert.match(ticketLines(plan, "U1", false)[1], /when it trades at \$364\.18 or higher \(buy-stop/);
+  assert.match(ticketLines(plan, "U1", false)[2], /sold at the close/);
+});
+
+test("ibkr: a batch is confirmed by typing every order", () => {
+  const batch = [{ qty: 8, symbol: "TSLA" }, { qty: 5, symbol: "f" }];
+  assert.equal(confirmPhrase(batch), "8 TSLA, 5 F");
+  assert.ok(confirmMatches("8 tsla,5 f", batch));
+  assert.ok(!confirmMatches("8 TSLA", batch));
+  assert.ok(!confirmMatches("5 F, 8 TSLA", batch));
+});
+
+test("ibkr: fees may be at most a quarter of the risk (IBKR's $1 minimum, seen live)", async () => {
+  const { ibkrFeeEstimate, feeProblem } = await import("../lib/ibkrOrder");
+  assert.equal(ibkrFeeEstimate(13, 11.5), 2); // $1.00 each way, as the preview charged
+  assert.equal(ibkrFeeEstimate(500, 20), 5); // $0.005 a share
+  assert.match(feeProblem({ symbol: "F", qty: 13, entry: 11.5, trigger: 11.5, stop: 11.2, target: 12.1 }) ?? "", /\$2\.00 in IBKR commissions .* \$3\.90 of risk/);
+  assert.equal(feeProblem(PLAN), undefined); // 8 TSLA: $2 against $46.88
 });
