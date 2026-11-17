@@ -311,3 +311,35 @@ ul.news li { margin-bottom: 4px; }
 .dk-rules { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--muted); }
 .dk-rules b { color: var(--text); }
 @media (max-width: 560px) { .dk-hero-side { justify-items: start; } .dk-big { font-size: 24px; } .dk-positions { grid-template-columns: 1fr; } }
+
+/* Claude's desk session timeline */
+.as { display: grid; gap: 10px; }
+.as-head { display: flex; gap: 6px 10px; align-items: center; flex-wrap: wrap; }
+.as-pick { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; font-size: 12px; max-width: 100%; }
+.as-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 560px; overflow-y: auto; }
+.as-step { display: flex; gap: 10px; min-width: 0; }
+.as-step details { flex: 1; min-width: 0; }
+.as-step summary { cursor: pointer; font-size: 13px; list-style: none; }
+.as-step summary::-webkit-details-marker { display: none; }
+.as-icon { flex: none; width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
+.as-step.thinking .as-icon { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.as-step.tool .as-icon { color: #7aa7ff; border-color: color-mix(in srgb, #7aa7ff 45%, transparent); }
+.as-step.decision .as-icon { color: var(--buy); border-color: color-mix(in srgb, var(--buy) 50%, transparent); }
+.as-step.error .as-icon, .as-step.fail .as-icon { color: var(--sell); border-color: color-mix(in srgb, var(--sell) 50%, transparent); }
+.as-input { margin-top: 4px; color: #7aa7ff; overflow-wrap: anywhere; }
+.as-detail { margin-top: 4px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; max-height: 220px; overflow-y: auto; }
+.as-step.thinking .as-detail, .as-step.decision .as-detail { color: var(--text); }
+.as-tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr)); gap: 8px; }
+.as-tool { display: grid; gap: 2px; padding: 10px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); }
+
+/* Trade team roster */
+.tm-roster { display: flex; flex-wrap: wrap; gap: 6px; }
+.tm-member { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); font-size: 12px; }
+.tm-member.active { color: var(--text); }
+.tm-member.on { border-color: var(--accent); color: var(--accent); }
+.tm-icon { width: 16px; text-align: center; }
+.tm-who { color: var(--accent); font-size: 12px; font-weight: 600; }
+.as-step.logged .as-icon { color: var(--buy); border-color: color-mix(in srgb, var(--buy) 50%, transparent); }
+.as-step.tm-delegate .as-icon { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.as-step.tm-skill .as-icon { color: #7aa7ff; border-color: color-mix(in srgb, #7aa7ff 45%, transparent); }
+.as-step.tm-report .as-detail { color: var(--text); }

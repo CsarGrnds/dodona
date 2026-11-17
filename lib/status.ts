@@ -51,6 +51,7 @@ export async function timed(base: Omit<StatusCheck, "state" | "detail" | "ms">, 
 export const SKILL_DEPS: Array<{ skill: string; does: string; needs: string[]; optional?: string[] }> = [
   { skill: "ibkr-gateway", does: "Reconnect IBKR and sync positions", needs: ["ibkr-gateway"] },
   { skill: "dodona-sync", does: "Sync positions via Claude's IBKR connector", needs: ["ibkr-connector"] },
+  { skill: "trade-desk", does: "Run the paper trade team (lead + 8 specialists)", needs: ["python", "yahoo-chart", "trader-config", "nasdaq"], optional: ["sec"] },
   { skill: "trader-scanner", does: "Scan the market for setups", needs: ["python", "yahoo-chart", "nasdaq"] },
   { skill: "trader-news", does: "Headlines and 8-Ks for your watchlist", needs: ["python", "yahoo-rss", "yahoo-chart"], optional: ["sec"] },
   { skill: "trader-entry", does: "Time the entry bar by bar", needs: ["python", "yahoo-chart"] },

@@ -1,11 +1,13 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AgentSessionView, AgentToolbox } from "@/components/AgentSessionView";
+import { TEAM_MODEL, TeamSessionView } from "@/components/TeamSessionView";
 import { DailyPnlChart, EquityChart, PnlCalendar, RDistribution, signedUsd } from "@/components/DeskCharts";
 import { Brand, Spinner } from "@/components/ui";
 import { fmt } from "@/lib/client";
 import type { DeskView } from "@/lib/data/deskView";
-import type { JournalKind } from "@/lib/desk";
+import type { AgentSession, JournalKind } from "@/lib/desk";
 import type { RunReport } from "@/lib/data/deskRun";
 import { getWatchlist } from "@/lib/store";
 
@@ -36,6 +38,8 @@ export default function DeskPage() {
   const [feed, setFeed] = useState<"all" | "trades" | "claude">("all");
   const [, tick] = useState(0);
   const runningRef = useRef(false);
+  const [live, setLive] = useState<AgentSession>();
+  const [pick, setPick] = useState<string>();
 
   const load = useCallback(async () => {
     try {
@@ -84,6 +88,20 @@ export default function DeskPage() {
     return () => clearInterval(id);
   }, [auto, run]);
   useEffect(() => {
+    if (!running) return;
+    const started = Date.now();
+    const poll = async () => {
+      try {
+        const j = await (await fetch("/api/desk/live", { cache: "no-store" })).json();
+        if (j.session && Date.parse(j.session.startedAt) >= started - 5_000) setLive(j.session);
+      } catch {
+        /* keep polling */
+      }
+    };
+    const id = setInterval(poll, 1_500);
+    return () => clearInterval(id);
+  }, [running]);
+  useEffect(() => {
     const id = setInterval(() => tick((x) => x + 1), 15_000);
     return () => clearInterval(id);
   }, []);
@@ -112,7 +130,7 @@ export default function DeskPage() {
   const journal = useMemo(() => {
     const j = d?.journal ?? [];
     if (feed === "trades") return j.filter((e) => e.kind === "buy" || e.kind === "sell");
-    if (feed === "claude") return j.filter((e) => e.by === "claude");
+    if (feed === "claude") return j.filter((e) => e.by === "claude" || e.by === "team");
     return j;
   }, [d, feed]);
 
@@ -125,6 +143,8 @@ export default function DeskPage() {
     );
 
   const st = d.stats;
+  const saved = d.sessions ?? [];
+  const shown: AgentSession | undefined = running && live ? live : saved.find((x) => x.id === pick) ?? saved[0];
   const today = st.today;
   const nextRunIn = auto && d.lastRunAt ? Math.max(0, Date.parse(d.lastRunAt) + AUTO_MS - Date.now()) : undefined;
 
@@ -146,7 +166,11 @@ export default function DeskPage() {
         <div className="dk-hero-main">
           <div className="row" style={{ gap: 8 }}>
             <span className="pill act">PAPER</span>
-            <span className={`pill ${d.agent.enabled ? "ok" : "care"}`}>{d.agent.enabled ? `✦ Claude trading · ${d.agent.model}` : "Rules engine trading"}</span>
+            {d.driver === "team" ? (
+              <span className="pill ok">✦ Claude Code trade team · /trade-desk</span>
+            ) : (
+              <span className={`pill ${d.agent.enabled ? "ok" : "care"}`}>{d.agent.enabled ? `✦ Claude trading · ${d.agent.model}` : "Rules engine trading"}</span>
+            )}
             <span className={`pill ${d.market.open ? "ok" : ""}`}>{d.market.open ? "Market open" : `Market closed · ${d.market.reason}`}</span>
           </div>
           <div className="dk-today">
@@ -179,12 +203,44 @@ export default function DeskPage() {
         </div>
       </section>
 
-      {!d.agent.enabled && (
+      {!d.agent.enabled && d.driver !== "team" && (
         <div className="dk-banner">
           <b>Claude isn&apos;t connected yet</b>, so the rules engine is trading: it takes a setup only when that setup made money on that stock before. Add <code>ANTHROPIC_API_KEY</code> to <code>.env.local</code> and restart Dodona to let Claude read the charts and trade. Model: <code>{d.agent.model}</code> (change with <code>DODONA_DESK_MODEL</code>).
         </div>
       )}
       {err && <div className="err" style={{ marginTop: 12 }}>{err}</div>}
+
+      {/* ---- Claude's session: what it is doing behind the scenes */}
+      <section className="panel" style={{ marginTop: 14 }}>
+        <div className="row" style={{ marginBottom: 10 }}>
+          <h2 style={{ margin: 0 }}>✦ Claude&apos;s session</h2>
+          <span className="spacer" />
+          {saved.length > 1 && !(running && live) && (
+            <select className="as-pick" value={shown?.id} onChange={(e) => setPick(e.target.value)}>
+              {saved.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {new Date(x.startedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · {x.model === TEAM_MODEL ? "trade team" : `${x.toolCalls} tools`} · {x.status}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        {shown?.model === TEAM_MODEL ? (
+          <TeamSessionView session={shown} onLive={load} />
+        ) : shown ? (
+          <AgentSessionView session={shown} live={running && !!live} />
+        ) : (
+          <>
+            <div className="small muted" style={{ marginBottom: 10 }}>
+              Run <code>/trade-desk</code> in Claude Code to start the trade team (a lead trader and 8 specialists using the real /trader-* skills, Time Machine included); its session shows here live. Or let Dodona&apos;s own desk trade with the button above.{" "}
+              {d.agent.enabled
+                ? "No session yet. Claude runs when there's a new setup or an open position to review, while the market is open. Every step it takes will show here live: its reasoning, each tool call with what came back, and the decision."
+                : "Once Claude is connected, every session shows here live: its reasoning, each tool it calls with what came back, and the decision. These are the tools it can use; all of them only read data:"}
+            </div>
+            <AgentToolbox />
+          </>
+        )}
+      </section>
 
       {/* ---- stat tiles */}
       <section className="dk-tiles">
@@ -247,7 +303,7 @@ export default function DeskPage() {
                   <div className="row">
                     <Link href={`/ticker/${encodeURIComponent(p.symbol)}`} className="dk-sym">{p.symbol}</Link>
                     <span className="pill">{p.style === "day" ? "Day" : "Swing"}</span>
-                    <span className="muted small">{p.setup} · {p.by === "claude" ? "✦ Claude" : "Rules"}</span>
+                    <span className="muted small">{p.setup} · {p.by === "team" ? "✦ Team" : p.by === "claude" ? "✦ Claude" : "Rules"}</span>
                     <span className="spacer" />
                     <span className={`mono ${tone(p.unrealized)}`}>{signedUsd(p.unrealized)} <span className="small">({fmt.signedPct(p.unrealizedPct)})</span></span>
                   </div>
@@ -318,7 +374,7 @@ export default function DeskPage() {
                 <li key={`${e.at}-${i}`}>
                   <span className={`dk-feed-icon ${KIND[e.kind].cls}`}>{KIND[e.kind].icon}</span>
                   <div>
-                    <div className="small muted">{nyDate(e.at)} {nyTime(e.at)} · {e.by === "claude" ? "✦ Claude" : e.by === "rules" ? "Rules" : "Desk"}</div>
+                    <div className="small muted">{nyDate(e.at)} {nyTime(e.at)} · {e.by === "team" ? "✦ Team" : e.by === "claude" ? "✦ Claude" : e.by === "rules" ? "Rules" : "Desk"}</div>
                     <div className="small">{e.text}</div>
                   </div>
                 </li>
@@ -344,9 +400,9 @@ export default function DeskPage() {
           )}
           <h2 style={{ marginTop: 16 }}>Who traded</h2>
           <div className="dk-setups">
-            {(["claude", "rules"] as const).map((k) => (
+            {(["team", "claude", "rules"] as const).map((k) => (
               <div key={k} className="row small">
-                <span>{k === "claude" ? "✦ Claude" : "Rules engine"}</span>
+                <span>{k === "team" ? "✦ Trade team" : k === "claude" ? "✦ Claude" : "Rules engine"}</span>
                 <span className="spacer" />
                 <span className="muted">{st.byAgent[k].trades} trades</span>
                 <b className={`mono ${tone(st.byAgent[k].pnl)}`}>{signedUsd(st.byAgent[k].pnl)}</b>
@@ -386,7 +442,7 @@ export default function DeskPage() {
                     <td className="small">{nyDate(t.exitAt)} {nyTime(t.exitAt)}</td>
                     <td><b>{t.symbol}</b></td>
                     <td className="small">{t.setup} <span className="muted">({t.style})</span></td>
-                    <td className="small">{t.by === "claude" ? "✦ Claude" : "Rules"}</td>
+                    <td className="small">{t.by === "team" ? "✦ Team" : t.by === "claude" ? "✦ Claude" : "Rules"}</td>
                     <td className="mono">{t.qty}</td>
                     <td className="mono">{usd(t.entry)}</td>
                     <td className="mono">{usd(t.exit)}</td>

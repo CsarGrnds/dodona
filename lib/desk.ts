@@ -78,7 +78,7 @@ export const minuteOf = (hhmm: string) => {
 // ---------------------------------------------------------------- ledger
 
 export type Style = "day" | "swing";
-export type Agent = "claude" | "rules";
+export type Agent = "claude" | "rules" | "team";
 export type ExitReason = "target" | "stop" | "flat-by" | "time" | "agent";
 
 export interface DeskPosition {
@@ -133,6 +133,37 @@ export interface DeskDay {
   losses: number;
 }
 
+/** One visible step of Claude's desk session: what it thought, which tool it used and what came back. */
+export interface SessionStep {
+  at: string;
+  kind: "thinking" | "tool" | "text" | "decision" | "error";
+  agent?: string; // which team member (Claude Code trade team), e.g. "scanner"
+  title: string;
+  detail?: string; // thinking summary, a text block, or a tool result preview
+  tool?: string;
+  input?: Record<string, unknown>;
+  ok?: boolean;
+  ms?: number;
+}
+
+export interface AgentSession {
+  id: string;
+  startedAt: string;
+  endedAt?: string;
+  model: string;
+  status: "running" | "done" | "error";
+  trigger: string; // why Claude was asked
+  steps: SessionStep[];
+  toolCalls: number;
+  rounds: number;
+  usage: { input: number; output: number; cacheRead: number };
+  summary?: string;
+  error?: string;
+  transcript?: string; // the Claude Code session id, for the trade team
+}
+
+export const SESSIONS_MAX = 30;
+
 export interface DeskState {
   version: 1;
   startedAt: string;
@@ -146,6 +177,8 @@ export interface DeskState {
   lastRunAt?: string;
   lastAgentAt?: string;
   lastSummary?: string;
+  sessions?: AgentSession[]; // newest first
+  driver?: "team" | "auto"; // team: the Claude Code trade team makes the entries; auto: Dodona's own desk
 }
 
 export const JOURNAL_MAX = 400;
@@ -470,7 +503,7 @@ export function deskStats(s: DeskState, nowMs: number): DeskStats {
     streak,
     fees: r2(t.reduce((a, x) => a + x.fees, 0) + s.positions.reduce((a, p) => a + p.fees, 0)),
     byStyle: { day: summary(styles.get("day") ?? []), swing: summary(styles.get("swing") ?? []) },
-    byAgent: { claude: summary(agents.get("claude") ?? []), rules: summary(agents.get("rules") ?? []) },
+    byAgent: { claude: summary(agents.get("claude") ?? []), rules: summary(agents.get("rules") ?? []), team: summary(agents.get("team") ?? []) },
     bySetup: [...setups.entries()]
       .map(([setup, xs]) => ({ setup, ...summary(xs), avgR: r2(xs.reduce((a, x) => a + x.R, 0) / xs.length) }))
       .sort((a, b) => b.pnl - a.pnl),

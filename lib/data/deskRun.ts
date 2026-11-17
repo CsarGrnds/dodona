@@ -18,6 +18,8 @@ import {
   riskGate,
   sizeTrade,
   type Agent,
+  type AgentSession,
+  SESSIONS_MAX,
   type DeskRules,
   type DeskState,
   type PriceBar,
@@ -32,7 +34,8 @@ import { supportResistance } from "../levels";
 import { marketBefore, marketSeries, relativeStrength, type MarketContext } from "../market";
 import { CLOSE_MIN, clockLabel, findSwingSetups, nyClock, orbHit, orMidStop, SETUP_LABEL, splitSessions, SWING_SETUPS, type IntradayBar, type SwingSetup } from "../setups";
 import type { Bar } from "../types";
-import { getDailyHistory, getIntraday, getMarketBars, getQuote, getSnapshot } from "./index";
+import { setLiveSession } from "./deskLive";
+import { getDailyHistory, getIntraday, getMarketBars, getQuote } from "./index";
 
 /** Liquid US names, many under $150 so a small account can buy whole shares. */
 export const DESK_UNIVERSE = [
@@ -58,6 +61,7 @@ export interface RunReport {
   exits: number;
   entries: number;
   notes: string[];
+  sessionId?: string; // Claude's session this run, when it ran
 }
 
 interface Scan extends CandidateInput {
@@ -83,7 +87,7 @@ async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Prom
   return out;
 }
 
-export async function runDesk(s: DeskState, rules: DeskRules, opts: { symbols?: string[]; nowMs?: number; useAgent?: boolean }): Promise<RunReport> {
+export async function runDesk(s: DeskState, rules: DeskRules, opts: { symbols?: string[]; nowMs?: number; useAgent?: boolean; manageOnly?: boolean }): Promise<RunReport> {
   const nowMs = opts.nowMs ?? Date.now();
   const at = iso(nowMs);
   const ms = marketStatus(nowMs);
@@ -130,7 +134,8 @@ export async function runDesk(s: DeskState, rules: DeskRules, opts: { symbols?: 
 
   // ---- 2. scan for setups (only while new entries are possible)
   const opened = s.positions.filter((x) => x.entryDate === today).length + s.trades.filter((t) => t.entryDate === today).length;
-  const canEnter = ms.open && minute >= minuteOf(rules.no_entries_before) && minute <= minuteOf(rules.no_entries_after) && opened < rules.max_trades_per_day && dailyRoom(rules, s, nowMs) > 0.01;
+  const manageOnly = opts.manageOnly ?? s.driver === "team"; // the trade team makes its own entries
+  const canEnter = !manageOnly && ms.open && minute >= minuteOf(rules.no_entries_before) && minute <= minuteOf(rules.no_entries_after) && opened < rules.max_trades_per_day && dailyRoom(rules, s, nowMs) > 0.01;
   let market: MarketContext | undefined;
   const spy = await getMarketBars().catch(() => [] as Bar[]);
   const mser = spy.length ? marketSeries(spy) : undefined;
@@ -158,7 +163,8 @@ export async function runDesk(s: DeskState, rules: DeskRules, opts: { symbols?: 
       }
     scans.sort((a, b) => (b.record?.avgR ?? -9) - (a.record?.avgR ?? -9));
     report.candidates = scans.map((c) => ({ key: c.key, symbol: c.symbol, setup: c.setup, style: c.style, price: c.price, record: c.record && { trades: c.record.trades, avgR: c.record.avgR, winRate: c.record.winRate, sample: c.record.sample, verdict: c.record.verdict } }));
-  } else if (!ms.open) report.notes.push(`Market ${ms.reason}: no new entries, positions marked from the latest bars.`);
+  } else if (manageOnly) report.notes.push("The Claude Code trade team makes the entries (/trade-desk): Dodona only marks positions and runs their stops, targets and flat-by time.");
+  else if (!ms.open) report.notes.push(`Market ${ms.reason}: no new entries, positions marked from the latest bars.`);
   else if (opened >= rules.max_trades_per_day) report.notes.push(`Trade limit reached (${rules.max_trades_per_day} today): managing open positions only.`);
   else if (dailyRoom(rules, s, nowMs) <= 0.01) report.notes.push(`Daily loss limit ($${rules.max_daily_loss_usd}) used up: no new entries today.`);
   else report.notes.push(`Outside the entry window (${rules.no_entries_before}–${rules.no_entries_after} New York): managing open positions only.`);
@@ -167,39 +173,44 @@ export async function runDesk(s: DeskState, rules: DeskRules, opts: { symbols?: 
 
   // ---- 3. decide
   let decision: DeskDecision | undefined;
-  if (useClaude && ms.open && (fresh.length || (s.positions.length && (!s.lastAgentAt || nowMs - Date.parse(s.lastAgentAt) >= REVIEW_EVERY_MS)))) {
+  if (useClaude && !manageOnly && ms.open && (fresh.length || (s.positions.length && (!s.lastAgentAt || nowMs - Date.parse(s.lastAgentAt) >= REVIEW_EVERY_MS)))) {
     const shortlist = fresh.slice(0, AGENT_CANDIDATES);
-    await pool(shortlist, PARALLEL, async (c) => {
-      try {
-        const snap = await getSnapshot(c.symbol);
-        c.news = snap.news.slice(0, 5).map((n) => `${n.publishedAt?.slice(0, 10) ?? ""} ${n.title}`.trim());
-        c.nextEarningsDate = snap.fundamentals.nextEarningsDate;
-      } catch {
-        /* news is optional */
-      }
-    });
-    const positions: PositionInput[] = await pool(s.positions, PARALLEL, async (p) => {
-      const intra = await getIntraday(p.symbol).catch(() => [] as IntradayBar[]);
-      const sess = splitSessions(intra, nowMs).at(-1);
-      const daily = p.style === "swing" ? (await getDailyHistory(p.symbol).catch(() => [] as Bar[])).slice(-30).map(ohlc) : undefined;
-      return { id: p.id, symbol: p.symbol, style: p.style, setup: p.setup, qty: p.qty, entry: p.entry, stop: p.stop, target: p.target, price: p.lastPrice, openedAt: p.openedAt, thesis: p.thesis, intraday: sess ? intradayRows(sess.bars) : undefined, daily };
-    });
+    // Claude fetches charts, news and levels itself with its tools; it starts from a short brief.
+    const positions: PositionInput[] = s.positions.map((p) => ({ id: p.id, symbol: p.symbol, style: p.style, setup: p.setup, qty: p.qty, entry: p.entry, stop: p.stop, target: p.target, price: p.lastPrice, openedAt: p.openedAt, thesis: p.thesis }));
+    const trigger = [shortlist.length ? `${shortlist.length} new setup${shortlist.length === 1 ? "" : "s"}: ${shortlist.map((c) => `${c.symbol} (${c.setup})`).join(", ")}` : "", s.positions.length ? `${s.positions.length} open position${s.positions.length === 1 ? "" : "s"} to review` : ""].filter(Boolean).join(" · ");
+    const session: AgentSession = { id: `S-${nowMs.toString(36)}`, startedAt: at, model: deskModel(), status: "running", trigger, steps: [], toolCalls: 0, rounds: 0, usage: { input: 0, output: 0, cacheRead: 0 } };
+    s.sessions = [session, ...(s.sessions ?? [])].slice(0, SESSIONS_MAX);
+    report.sessionId = session.id;
+    setLiveSession(session);
     try {
-      decision = await runDeskAgent({
-        now: `${ms.weekday} ${today} ${clockLabel(minute)} New York`,
-        rules,
-        account: { equity: equityOf(s), cash: s.cash, dailyRoom: r2(dailyRoom(rules, s, nowMs)), tradesLeftToday: Math.max(0, rules.max_trades_per_day - opened) },
-        market,
-        candidates: shortlist.map(({ setupKey: _k, marketTrend: _m, ...c }) => c),
-        positions,
-        recentTrades: s.trades.slice(-10).map((t) => ({ symbol: t.symbol, setup: t.setup, pnl: t.pnl, R: t.R, reason: t.reason, date: t.exitDate })),
-      });
+      decision = await runDeskAgent(
+        {
+          now: `${ms.weekday} ${today} ${clockLabel(minute)} New York`,
+          rules,
+          account: { equity: equityOf(s), cash: s.cash, dailyRoom: r2(dailyRoom(rules, s, nowMs)), tradesLeftToday: Math.max(0, rules.max_trades_per_day - opened) },
+          market,
+          candidates: shortlist.map(({ setupKey: _k, marketTrend: _m, daily: _d, intraday: _i, levels: _l, ...c }) => c),
+          positions,
+          recentTrades: s.trades.slice(-10).map((t) => ({ symbol: t.symbol, setup: t.setup, pnl: t.pnl, R: t.R, reason: t.reason, date: t.exitDate })),
+        },
+        { nowMs, today, desk: s },
+        session,
+        () => setLiveSession(session),
+      );
+      session.status = "done";
+      session.summary = decision.summary;
       s.lastAgentAt = at;
       if (decision.summary) s.lastSummary = decision.summary;
       for (const c of shortlist) s.reviewed[c.key] = at;
     } catch (e) {
       report.agentError = e instanceof Error ? e.message : String(e);
+      session.status = "error";
+      session.error = report.agentError;
+      session.steps.push({ at: new Date().toISOString(), kind: "error", title: "Session failed", detail: report.agentError });
       report.notes.push(`Claude unavailable (${report.agentError}): the rules engine decided this round.`);
+    } finally {
+      session.endedAt = new Date().toISOString();
+      setLiveSession(session);
     }
   }
 

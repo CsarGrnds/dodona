@@ -42,7 +42,7 @@ Also loaded by the ticker page:  /api/setups (setups + track records) · /api/re
 Dashboard:                       /api/performance (IBKR account value) · /api/pulse (winners, losers, why) · /api/congress
 Portfolio:                       /api/portfolio (trader/portfolio.json) · /api/ibkr (IBKR gateway sync)
 Status:                          /api/status (live check of every connector)
-Desk:                            /api/desk · /api/desk/run · /api/desk/reset (the paper trading desk)
+Desk:                            /api/desk · /api/desk/run · /api/desk/reset · /api/desk/live · /api/desk/team (the paper desk, Claude's live session, the trade team's session)
 Today:                           /api/today (holdings + open IBKR orders + watchlist → stops, discounts, buy limits)
 ```
 
@@ -65,6 +65,7 @@ npm run dev                     # http://localhost:3000
 | `npm run ibkr -- status \| sync \| where` | IBKR gateway: is it logged in, sync positions, where it's installed |
 | `npm run sync:ibkr` | Turn the IBKR connector's saved output into `trader/portfolio.json` |
 | `npm run demo:portfolio` | Write a fictional portfolio at today's prices (`docs/demo/portfolio.json`) |
+| `npm run desk -- prep \| status \| book \| stop \| close \| log \| session start\|end \| driver` | The paper desk from the command line, for the `/trade-desk` team (JSON out) |
 | `npm run screenshots` | Capture the README screenshots from a running demo server (the `dodona-demo` launch config); it refuses to run against a real portfolio |
 
 Check changes with real market data. `DODONA_MOCK=1 npm run dev` (synthetic data) is only for working offline.
@@ -95,7 +96,8 @@ Check changes with real market data. `DODONA_MOCK=1 npm run dev` (synthetic data
 | `lib/pulse.ts`, `app/api/pulse/route.ts`, `components/PortfolioPulse.tsx` | Main screen: winners, losers and why the portfolio is up or down |
 | `lib/performance.ts`, `app/api/performance/route.ts`, `components/AccountChart.tsx` | Main screen: account value chart from IBKR (NAV + time-weighted return) |
 | `lib/status.ts`, `lib/data/status.ts`, `app/api/status/route.ts`, `app/status/page.tsx` | Status: live health check of every connector |
-| `lib/desk.ts`, `lib/deskAgent.ts`, `lib/data/desk.ts`, `lib/data/deskRun.ts`, `lib/data/deskView.ts`, `app/api/desk/*`, `app/desk/page.tsx`, `components/DeskCharts.tsx` | Desk: Claude's paper trading desk: ledger, sizing, risk gate, fills from bars, the agent, P&L history and charts |
+| `.claude/skills/trade-desk/`, `.claude/agents/trade-*.md`, `scripts/desk.ts`, `lib/data/paper.ts`, `lib/data/transcripts.ts`, `app/api/desk/team/route.ts`, `components/TeamSessionView.tsx` | Trade team: the lead skill, 8 specialist subagents, the paper workspace and booking check, and the live team view from Claude Code transcripts |
+| `lib/desk.ts`, `lib/deskAgent.ts`, `lib/data/desk.ts`, `lib/data/deskRun.ts`, `lib/data/deskTools.ts`, `lib/data/deskLive.ts`, `lib/data/deskView.ts`, `app/api/desk/*`, `app/desk/page.tsx`, `components/DeskCharts.tsx`, `components/AgentSessionView.tsx` | Desk: Claude's paper trading desk: ledger, sizing, risk gate, fills from bars, the agent's tool loop and research tools, its live session, P&L history and charts |
 | `tests/` | Node test runner suites (`npm test`) |
 
 ## Ticker page: everything for one stock
@@ -175,11 +177,25 @@ Each run (**Run desk now**, or **Auto every 5 min** while the page is open):
 
 1. **Open positions** are replayed against real 5-minute bars since the entry: the stop (a gap fills at the open, and a bar that touches both counts as the stop), the target, the flat-by time for day trades, and a 20-session time stop for swing trades.
 2. **Scan.** While new entries are allowed, it scans a list of liquid stocks plus your watchlist for a fresh opening-range breakout (the last 15 minutes) and yesterday's daily setups (20-day breakout, bull flag, reclaimed 20-day average, oversold bounce), each with its track record on that stock. Stocks a whole share of which is over the position cap are skipped.
-3. **Decide.** With `ANTHROPIC_API_KEY` set, Claude (`DODONA_DESK_MODEL`, default `claude-opus-5-5`) gets each new setup's daily and 5-minute bars, indicators, support and resistance, the market, headlines and the next earnings date, plus the open positions. It answers buy or skip with a stop and target for each setup, and hold, raise the stop or close for each position, with its reasons. It's asked about a setup once, and re-reads open positions at most every 15 minutes. Without a key, the **rules engine** trades instead: it takes a setup only when that setup made money on that stock before and the market isn't in a downtrend, and moves stops to break-even at 1R.
+3. **Decide.** With `ANTHROPIC_API_KEY` set, Claude (`DODONA_DESK_MODEL`, default `claude-opus-5-5`) gets a short brief (the new setups, the open positions, the account and the rules) and then **researches with tools** before deciding, like a trader pulling up charts:
+
+   | Tool | What it returns |
+   |---|---|
+   | `get_market_overview` | SPY's trend, and today's move for SPY, QQQ, IWM and 12 sector ETFs, ranked |
+   | `get_daily_chart` | Up to 250 daily candles plus today so far |
+   | `get_intraday_chart` | Today's (or an earlier session's) 5/15/30-minute bars, the opening range and VWAP |
+   | `get_levels_and_indicators` | Support and resistance with touch counts, moving averages, RSI, MACD, ATR, Bollinger bands, relative strength vs SPY |
+   | `get_setup_track_record` | Which setups fired and how each did on that stock before (daily and opening range) |
+   | `get_news_and_events` | Headlines, next earnings date, sector, beta, analysts |
+   | `get_desk_history` | The desk's own closed trades and results by setup |
+
+   Every tool only reads data and sees the market only up to the run's clock. A session is capped at 14 model rounds and 40 tool calls. Claude then answers buy or skip with a stop and target for each setup, and hold, raise the stop or close for each position, with its reasons. It's asked about a setup once, and re-reads open positions at most every 15 minutes. Without a key, the **rules engine** trades instead: it takes a setup only when that setup made money on that stock before and the market isn't in a downtrend, and moves stops to break-even at 1R.
 4. **Size and risk-check in code, after Claude.** Claude never picks the size and can't loosen a rule. Shares come from trader-budget's four limits (max loss, position cap, max order, cash after the buffer). Then the trader-risk day rules: stop below the entry, reward:risk minimum, entry window, trades per day, the daily loss limit (losses so far plus open risk), blocked tickers, one position per stock. A trade where the $0.70 round-trip commission would be more than 25% of what it risks is refused as too small. Stops only move up.
 5. **Book it.** Fills are at the live price (Yahoo) with 0.05% slippage and IBKR's $0.35 minimum commission each way.
 
-The page shows today's P&L, account value and cash at risk; win rate, profit factor, per-trade expectancy and R, green and red days, max drawdown and streak; an equity curve, daily P&L bars, a P&L calendar and how trades ended in R; open positions on a stop-to-target track; Claude's latest read of the market; a journal of every buy, sell, skip and blocked trade with the reason; results by setup and by who traded (Claude or rules); and the full trade history. The ledger is `trader/desk.json` (gitignored). **Reset paper account** starts over at your budget and keeps the old ledger as `trader/desk-<time>.json`.
+**Claude's session** is the panel at the top of the page: what Claude is doing behind the scenes, live while a run is going (`/api/desk/live`, polled every 1.5 s) and saved afterwards (the last 30 sessions in the ledger, pick one from the list). It shows each step: Claude's summarized reasoning, every tool call with its input, how long it took and what came back, and the final decision, plus the rounds, tool calls and tokens used. Before Claude is connected it lists the tools it will have.
+
+The page also shows today's P&L, account value and cash at risk; win rate, profit factor, per-trade expectancy and R, green and red days, max drawdown and streak; an equity curve, daily P&L bars, a P&L calendar and how trades ended in R; open positions on a stop-to-target track; Claude's latest read of the market; a journal of every buy, sell, skip and blocked trade with the reason; results by setup and by who traded (Claude or rules); and the full trade history. The ledger is `trader/desk.json` (gitignored). **Reset paper account** starts over at your budget and keeps the old ledger as `trader/desk-<time>.json`.
 
 Runs happen only while the page is open; positions opened earlier are still closed correctly from the bars on the next run. Past paper results don't promise future ones.
 
@@ -219,12 +235,46 @@ Positions update only when you sync (button, "refresh IBKR", or the connector); 
 - They read and write a `trader/` folder at the repo root (gitignored): `config.json`, `plan.json`, `orders.json`, the broker log.
 - SEC tools need `"sec_user_agent": "Your Name you@example.com"` in `trader/config.json` or the `SEC_USER_AGENT` env var.
 - Nothing places an order on its own; `/trader-broker` is paper by default and requires your explicit yes per order.
-- The skills are independent of the Next.js app; Dodona's UI does not call them. Dodona ports their logic to TypeScript instead (see the "From" column above).
+- The Next.js app doesn't call them; Dodona ports their logic to TypeScript instead (see the "From" column above). The **trade team** below runs the real skills, in Claude Code.
 
 Dodona's own skills, in the same folder:
 
 - `/ibkr-gateway`: "refresh IBKR" / "reconnect IBKR". Checks the gateway, starts it, sends you to log in, syncs.
 - `/dodona-sync`: "sync my IBKR positions" through Claude's IBKR connector.
+- `/trade-desk`: "run the trade desk". The paper **trade team**, below.
+
+## Trade team: Claude Code runs the real skills, Dodona shows it
+
+`/trade-desk` makes Claude Code the **lead trader** of a paper day-trading team. It sends the work to eight specialist subagents (`.claude/agents/trade-*.md`), each using one real skill, and books on Dodona's paper desk only what trader-risk passes:
+
+| Subagent | Skill | Job |
+|---|---|---|
+| `trade-scanner` | `/trader-scanner` | Today's setups, at most 5 candidates |
+| `trade-news` | `/trader-news` | CLEAR / CAUTION / AVOID per ticker |
+| `trade-entry` | `/trader-entry` | Has the breakout triggered on a completed bar? |
+| `trade-exit` | `/trader-exit` | Stop, target, R, reward:risk |
+| `trade-timemachine` | `/trader-timemachine` | 10,000 replays of the rest of the day plus every past session: odds, average R, verdict |
+| `trade-analyst` | `/trader-analyst` | Earnings trend (needs `SEC_USER_AGENT`) |
+| `trade-budget` | `/trader-budget` | Shares inside your rules, one bracket order |
+| `trade-risk` | `/trader-risk` | PASS or BLOCK: the last word |
+
+How it stays paper and safe:
+
+- **Its own workspace.** The skills read fixed `trader/...` paths, so the team runs them in `trader/paper/`, which Dodona fills from the paper desk: your rules (with `paper: true`), the paper cash and positions, and what the paper desk placed in the last 7 days. Run from the repo root they'd size against your real IBKR portfolio.
+- **One candidate at a time** through entry → exit → Time Machine → budget → risk (they share `plan.json` and `orders.json`).
+- **Booking is checked twice.** `npm run desk -- book` books only the one bracket order in `trader/paper/trader/orders.json`, only if trader-risk PASSED that exact order in the last 15 minutes (same SHA-256 fingerprint as `check.py`), and then Dodona's own desk rules check it again. Fills are at the live price with slippage and commission. Nothing is ever sent to a broker; the team never runs `/trader-broker`.
+- **Exits are the desk's job.** Once the team is driving (`npm run desk -- driver team`, set by `prep`), Dodona's own runs only mark positions and run their stops, targets and flat-by time; the team makes the entries.
+
+`npm run desk` (`scripts/desk.ts`) is the team's interface to the paper desk: `prep`, `status`, `book`, `stop`, `close`, `session start|end`, `log`, `driver team|auto`. Each prints JSON.
+
+**What Dodona shows.** On `/desk`, the **Claude's session** panel shows each team session live (polled every 3 s) with the roster of the lead and the eight specialists (click one to see only its work). Each step comes from two sources:
+
+- **Verdicts** the team logs with `npm run desk -- log`.
+- **Everything behind them**, read from this machine's Claude Code transcripts (`~/.claude/projects/<this project>/`): the lead's reasoning, each subagent it sent out and its report, and every skill run with its command. Turn on "Every command output" to see the raw output too.
+
+Claude Code's transcript format isn't documented, so the reader skips anything it doesn't recognize. The logged verdicts still show if the format changes.
+
+Run it all day with `/loop 15m /trade-desk` between 9:45 AM and 3:30 PM New York time. It uses your Claude plan's usage. Running the same team through the Claude Agent SDK instead would be billed per token: at Opus 5.5 prices, a cycle is roughly $0.60–1.00, so about $15–25 for a day at one cycle every 15 minutes.
 
 ## Roadmap ideas
 
@@ -233,4 +283,4 @@ Dodona's own skills, in the same folder:
 - Earnings-calendar and ex-dividend alerts; SEC filings and reported quarters in the agent context
 - Congress trades for one stock on its ticker page; Senate reports
 - Orders through the IBKR gateway (e.g. "raise this stop" from Today), each one shown as a ticket and placed only on your explicit yes
-- Run the desk on a schedule (no open tab needed), and let it trade the IBKR paper account through the gateway, each order still yours to approve
+- Let the trade team trade the IBKR paper account through the gateway, each order still yours to approve
