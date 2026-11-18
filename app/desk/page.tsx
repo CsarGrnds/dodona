@@ -207,7 +207,12 @@ export default function DeskPage() {
       <section className={`panel dk-hero ${today ? (today.pnl >= 0 ? "green" : "red") : ""}`}>
         <div className="dk-hero-main">
           <div className="row" style={{ gap: 8 }}>
-            <span className="pill act">PAPER</span>
+            <span className="pill act" title="This panel, the charts and the history are Dodona's practice ledger: paper money, real prices.">PAPER desk</span>
+            {d.realOrders?.on && (
+              <a href="#ibkr-orders" className={`pill ${d.realOrders.live ? "bad" : "ok"}`} title="Real orders go to Interactive Brokers from the IBKR orders panel below, only when you approve them.">
+                {d.realOrders.live ? "LIVE orders · IBKR" : "IBKR paper orders"}
+              </a>
+            )}
             {d.driver === "team" ? (
               <span className="pill ok">✦ Claude Code trade team · /trade-desk</span>
             ) : (

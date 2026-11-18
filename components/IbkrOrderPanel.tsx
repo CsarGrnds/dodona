@@ -67,7 +67,7 @@ export function IbkrOrderPanel() {
   const live = t.account && !t.accountIsPaper;
 
   return (
-    <section className="panel" style={{ marginTop: 14 }}>
+    <section className="panel" id="ibkr-orders" style={{ marginTop: 14 }}>
       <div className="row" style={{ marginBottom: 8 }}>
         <h2 style={{ margin: 0 }}>⇄ IBKR orders</h2>
         <span className={`pill ${off ? "" : t.accountIsPaper ? "ok" : t.account ? "bad" : "care"}`}>

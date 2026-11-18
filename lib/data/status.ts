@@ -27,7 +27,7 @@ const ago = (h: number) => (h < 1 ? `${Math.round(h * 60)} min ago` : h < 48 ? `
 export async function runChecks(): Promise<StatusCheck[]> {
   const gw = await gatewayStatus();
   const gwReady = gw.state === "ready";
-  const gwFix = gw.state === "down" ? "Say “refresh IBKR” in Claude Code: /ibkr-gateway starts the gateway and walks you through the login." : `Log in at ${gw.url} (accept the certificate warning, approve IBKR Mobile).`;
+  const gwFix = gw.state === "down" ? "Say “refresh IBKR” in Claude Code: /ibkr-gateway starts the gateway and walks you through the login." : `Log in at ${gw.url} (accept the certificate warning, approve IBKR Mobile). If the login doesn't take, say “refresh IBKR” in Claude Code: it restarts a stale gateway first.`;
   const needGw = async () => ({ state: "off" as const, detail: `Needs the gateway (${gw.state === "down" ? "not running" : "not logged in"})`, fix: gwFix });
 
   const checks = await Promise.all([

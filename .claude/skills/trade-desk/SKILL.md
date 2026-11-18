@@ -125,6 +125,10 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
   refuses a trade whose fees (about $2 in and out) are over 25% of its max loss, so the max loss must
   be at least about $8.
 
+0. **The IBKR gateway must be logged in first**, so the user can approve the batch within 15
+   minutes of the risk check: `npm run -s ibkr -- status`. Not `READY`? Follow `/ibkr-gateway` (it
+   restarts a stale gateway when a login doesn't take) and wait for the user before going on.
+   Best done before 9:30 AM New York, while the opening range forms.
 1. `npm run desk -- session start --trigger "LIVE MORNING: today's real-account batch"`, then
    `npm run desk -- stage clear`.
 2. `trade-scanner` (ORB scan) → `trade-news` on its candidates; drop AVOIDs. Log both.
