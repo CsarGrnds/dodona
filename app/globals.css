@@ -391,3 +391,5 @@ ul.news li { margin-bottom: 4px; }
 .ib-batch { display: grid; gap: 8px; margin: 6px 0 10px; }
 .tr-status { display: grid; gap: 4px; max-width: 320px; text-align: right; justify-items: end; }
 .tr-last { font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.tr-next { text-align: right; max-width: 340px; }
+.tr-count { color: var(--accent); font-size: 13px; }

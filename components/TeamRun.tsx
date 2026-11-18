@@ -4,6 +4,7 @@
 // Shows whether it's running, its latest steps and its answer, and lets you stop it.
 import { useCallback, useEffect, useState } from "react";
 import { Spinner } from "@/components/ui";
+import { nextAutoRun } from "@/lib/autoBatch";
 import type { LiveRun } from "@/lib/data/liveRun";
 
 export async function startTeamRun(mode: "live" | "paper"): Promise<{ ok: boolean; error?: string }> {
@@ -48,6 +49,27 @@ export function TeamRunStatus({ tick }: { tick: number }) {
       </div>
       {r.running && r.lines.length > 0 && <div className="muted tr-last">{r.lines[r.lines.length - 1]}</div>}
       {!r.running && (r.result || r.error) && <div className={r.error ? "err" : "muted"}>{(r.error ?? r.result ?? "").replace(/\*\*|`/g, "").slice(0, 400)}</div>}
+    </div>
+  );
+}
+
+/** "Next team run 12:00 New York · in 26:14", ticking every second. */
+export function NextRunCountdown({ times }: { times: string[] }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const next = nextAutoRun(now, times);
+  if (!next) return null;
+  const s = Math.max(0, Math.round((next.at - now) / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  const left = h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}:${String(sec).padStart(2, "0")}`;
+  const local = new Date(next.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return (
+    <div className="tr-next small" title={`Batch times (New York): ${times.join(", ")}. Change them in Settings → Broker.`}>
+      <span className="muted">Next team run</span> <b>{next.dayLabel === "today" ? "" : `${next.dayLabel} `}{next.time} New York</b>
+      <span className="muted"> ({local} your time)</span> · <b className="mono tr-count">{s < 60 ? "starting…" : `in ${left}`}</b>
     </div>
   );
 }

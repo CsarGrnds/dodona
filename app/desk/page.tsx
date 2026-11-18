@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentSessionView, AgentToolbox } from "@/components/AgentSessionView";
 import { IbkrOrderPanel } from "@/components/IbkrOrderPanel";
-import { TeamRunStatus, startTeamRun } from "@/components/TeamRun";
+import { NextRunCountdown, TeamRunStatus, startTeamRun } from "@/components/TeamRun";
 import { ClaudeSessionView, TEAM_MODEL, TeamSessionView, type ClaudeSessionInfo } from "@/components/TeamSessionView";
 import { DailyPnlChart, EquityChart, PnlCalendar, RDistribution, signedUsd } from "@/components/DeskCharts";
 import { Brand, Spinner } from "@/components/ui";
@@ -276,6 +276,7 @@ export default function DeskPage() {
               >
                 {teamBusy ? <Spinner /> : d.realOrders?.on ? (inBatchWindow() ? "Run desk now · prepare IBKR batch" : "IBKR batch: 9:46 AM–3 PM New York") : "Run desk now · team cycle"}
               </button>
+              {!!d.realOrders?.autoBatch?.length && <NextRunCountdown times={d.realOrders.autoBatch} />}
               <TeamRunStatus tick={teamTick} />
             </>
           ) : (
