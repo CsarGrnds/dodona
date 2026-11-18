@@ -145,6 +145,9 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
   touch `"paper"`.
 - Skip any stock the user already holds (`trader/portfolio.json`): Dodona refuses them, so a day
   trade's sell can never touch shares they keep.
+- Never stage more than the budget allows: the batch's total cost (shares x trigger, plus anything
+  placed at IBKR earlier today) must fit in the budget minus the cash buffer (with $200 and 20%: $160).
+  Dodona refuses a batch over it, so stage the best trade first and stop when the next one won't fit.
 - Skip trades too small to pay for themselves: IBKR charges at least $1.00 each way (fixed pricing),
   and Dodona refuses a trade whose fees (about $2 in and out) are over the user's "max_fee_pct" of its
   max loss (Settings → Risk → Max fees vs risk; 25% if unset). Read it from `trader/config.json`, and

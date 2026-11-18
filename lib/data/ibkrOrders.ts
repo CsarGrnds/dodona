@@ -21,7 +21,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { marketStatus } from "@/lib/clock";
-import { confirmMatches, confirmPhrase, feeProblem, ibkrBracket, ibkrMoney, ibkrWarning, isPaperAccount, maxLossOf, nyIso, parsePlaceAnswer, ticketLines, type BracketPlan, type PlaceAnswer } from "@/lib/ibkrOrder";
+import { confirmMatches, confirmPhrase, entryRef, feeProblem, ibkrBracket, ibkrMoney, ibkrWarning, isPaperAccount, maxLossOf, nyIso, parsePlaceAnswer, ticketLines, type BracketPlan, type PlaceAnswer } from "@/lib/ibkrOrder";
 import type { OpenOrder } from "@/lib/prep";
 import { nyClock } from "@/lib/setups";
 import { configPath } from "./desk";
@@ -51,6 +51,7 @@ interface LogRec {
   qty?: string;
   kind?: string;
   max_loss?: number;
+  cost?: number; // qty x the entry price it was sized at: what it puts into the trade if it fills
   stop?: number;
   plain?: string;
   status: "approved" | "placed" | "failed" | "declined" | "canceled";
@@ -119,6 +120,8 @@ export interface IbkrTicket {
   items: BatchItem[];
   totalMaxLoss: number;
   dailyLimit?: number;
+  batchCost: number; // what the batch puts into trades if every order fills
+  spendable?: number; // the budget minus the cash buffer
   confirm?: string; // what to type to place them
   account?: string;
   accountIsPaper?: boolean;
@@ -182,6 +185,14 @@ export async function ibkrTicket(nowMs = Date.now()): Promise<IbkrTicket> {
   const totalMaxLoss = Math.round(items.reduce((a, x) => a + x.maxLoss, 0) * 100) / 100;
   const dailyLimit = Number(cfg.max_daily_loss_usd) || undefined;
   if (dailyLimit && totalMaxLoss > dailyLimit + 0.005) problems.push(`Together these risk $${totalMaxLoss.toFixed(2)}, over your $${dailyLimit.toFixed(2)} daily limit.`);
+  // never more money in trades than the budget allows: this batch plus what was placed earlier today
+  const budget = Number(cfg.budget);
+  const spendable = budget > 0 ? Math.round(budget * (1 - (Number(cfg.cash_buffer_pct) || 0) / 100) * 100) / 100 : undefined;
+  const batchCost = Math.round(items.reduce((a, x) => a + x.plan.qty * entryRef(x.plan), 0) * 100) / 100;
+  const st2 = await readJson(BROKER());
+  const placedToday = Math.round(((st2?.orders ?? []) as LogRec[]).filter((r) => r.broker === "ibkr" && r.date === nyClock(nowMs).date && r.status === "placed").reduce((a, r) => a + (r.cost ?? 0), 0) * 100) / 100;
+  if (spendable !== undefined && items.length && batchCost + placedToday > spendable + 0.005)
+    problems.push(`Together these cost $${batchCost.toFixed(2)}${placedToday ? ` (plus $${placedToday.toFixed(2)} placed earlier today)` : ""}, over the $${spendable.toFixed(2)} your budget allows ($${budget.toFixed(0)} minus the ${cfg.cash_buffer_pct ?? 0}% cash buffer).`);
 
   return {
     ready: problems.length === 0 && items.length > 0,
@@ -189,6 +200,8 @@ export async function ibkrTicket(nowMs = Date.now()): Promise<IbkrTicket> {
     items,
     totalMaxLoss,
     dailyLimit,
+    batchCost,
+    spendable,
     confirm: items.length ? confirmPhrase(items.map((x) => x.plan)) : undefined,
     account,
     accountIsPaper: account ? isPaperAccount(account) : undefined,
@@ -268,7 +281,7 @@ async function finish(ans: PlaceAnswer, ctx: Ctx, res: PlaceResult) {
     res.questions.push({ id: q.id, symbol: ctx.plan.symbol, messages: q.messages });
   }
   if (ans.placed.length) {
-    await log({ ...base, status: "placed", max_loss: maxLossOf(ctx.plan), stop: ctx.plan.stop, broker_order_id: ans.placed.map((p) => p.orderId).join(",") });
+    await log({ ...base, status: "placed", max_loss: maxLossOf(ctx.plan), cost: Math.round(ctx.plan.qty * entryRef(ctx.plan) * 100) / 100, stop: ctx.plan.stop, broker_order_id: ans.placed.map((p) => p.orderId).join(",") });
     res.placed.push({ symbol: ctx.plan.symbol, orderIds: ans.placed.map((p) => p.orderId) });
   }
 }

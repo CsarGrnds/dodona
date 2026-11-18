@@ -101,7 +101,7 @@ export function IbkrOrderPanel() {
                 );
               })}
               <div className="small">
-                Together they risk <b>{money(t.totalMaxLoss)}</b>{t.dailyLimit ? <> of your {money(t.dailyLimit)} daily limit</> : null}, if every stop fills. Each one buys only if its price triggers today; unfilled orders end at the close.
+                Together they cost <b>{money(t.batchCost)}</b>{t.spendable !== undefined ? <> of the {money(t.spendable)} your budget allows</> : null} and risk <b>{money(t.totalMaxLoss)}</b>{t.dailyLimit ? <> of your {money(t.dailyLimit)} daily limit</> : null}, if every stop fills. Each one buys only if its price triggers today; unfilled orders end at the close.
               </div>
             </div>
           ) : (
@@ -116,6 +116,7 @@ export function IbkrOrderPanel() {
               ["None of them is a stock you already hold", t.items.length > 0 && !t.problems.some((p) => /already hold/.test(p))],
               ["Fees are at most 25% of each trade's risk", t.items.length > 0 && !t.problems.some((p) => /commissions/.test(p))],
               ["Together they fit your daily loss limit", t.items.length > 0 && !t.problems.some((p) => /daily limit/.test(p))],
+              ["Together they fit your budget (after the cash buffer)", t.items.length > 0 && !t.problems.some((p) => /your budget allows/.test(p))],
               ["The market is open", !t.problems.some((p) => /market is closed/.test(p))],
             ].map(([label, ok]) => (
               <li key={String(label)} className={ok ? "ok" : "no"}>{ok ? "✓" : "✕"} {label}</li>
