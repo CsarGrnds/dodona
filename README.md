@@ -285,6 +285,8 @@ Real trades work like this: **the team prepares, you approve once, IBKR waits fo
 
 The button starts the team as a background Claude Code session (`claude -p "/trade-desk live"`, `lib/data/liveRun.ts`, `POST /api/desk/prepare`). The session uses your Claude plan, shows live in "Claude's session", and its latest step and final answer show under the button, with a Stop button. It may only run the desk and gateway-status `npm` commands, the skill scripts, and read files and start subagents. Editing files, the web, `curl` and `git` are blocked, and it can't place, change or cancel an order. When the team drives the desk and real orders are off, the same button runs one paper cycle (`/trade-desk`) instead. "Manage paper positions every 5 min" only runs the paper desk's stops, targets and close.
 
+**By itself during the day.** Turn on Settings → Broker → **Prepare the batch by itself** and set **Batch times** (New York, between 09:46 and 15:00; default `09:47, 11:00, 13:00`). While Dodona runs, its timer (`lib/autoBatch.ts`, `autoBatchTick` in `lib/data/liveRun.ts`) starts `/trade-desk live` at each time. It only runs on a weekday with the market open, the gateway logged in, no team run going and no batch already waiting. A time a few minutes late still runs, and each runs once a day. When a batch is ready, from these runs or your own clicks, a **notification appears on this Mac** saying approve within 15 minutes. If the gateway is logged out at a batch time, the notification says so instead. Nothing is ever placed without your typed confirmation and click.
+
 Every gate, every time:
 
 1. **Off until you turn it on:** Settings → Broker: Interactive Brokers, and **Send orders to IBKR**.

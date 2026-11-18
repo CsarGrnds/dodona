@@ -185,7 +185,7 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
    that the user approves them in Dodona (Desk → IBKR orders) within 15 minutes of the risk
    check. If PushNotification is available, notify the user with the same one line.
 
-Never run this from `/loop` or a schedule: it ends with the user, not with you.
+Never run this from `/loop`. Dodona's own timer may start it at the user's "Batch times" (Settings → Broker → Prepare the batch by itself): it still only stages and checks, and it ends with the user approving the batch on the Desk.
 
 ## REVIEW mode (`/trade-desk review`): the coach, after the close
 

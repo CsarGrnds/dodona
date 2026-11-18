@@ -13,6 +13,9 @@ import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { dueSlot, parseAutoTimes } from "../autoBatch";
+import { marketStatus } from "../clock";
+import { gatewayStatus } from "./ibkr";
 
 const dir = () => resolve(process.cwd(), "trader", "runs");
 const STATE = () => join(dir(), "live-run.json");
@@ -161,7 +164,7 @@ export async function liveRun(): Promise<LiveRun> {
 // ---------------------------------------------------------------- the daily review, on its own
 
 const REVIEW_DONE = () => join(dir(), "last-review.txt");
-const g = globalThis as unknown as { __dodonaReviewTimer?: ReturnType<typeof setInterval> };
+const g = globalThis as unknown as { __dodonaReviewTimer?: ReturnType<typeof setInterval>; __dodonaTimerVersion?: number };
 
 function nyNow(now = new Date()) {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now).map((x) => [x.type, x.value]));
@@ -182,9 +185,77 @@ export async function maybeStartReview(now = new Date()): Promise<"started" | "n
   return (await startLiveRun("review")).ok ? "started" : "busy";
 }
 
-/** While Dodona runs, check every minute whether today's review is due. Safe to call often. */
+// ---------------------------------------------------------------- the batch, by itself
+
+/** A notification on this Mac (macOS only; quietly nothing elsewhere). */
+export function notifyMac(title: string, text: string) {
+  if (process.platform !== "darwin") return;
+  const q = (x: string) => JSON.stringify(x.replace(/"/g, "'"));
+  try {
+    spawn("osascript", ["-e", `display notification ${q(text)} with title ${q(title)} sound name "Glass"`], { stdio: "ignore", detached: true }).unref();
+  } catch {
+    /* no notifications: the Desk still shows it */
+  }
+}
+
+const AUTO_DONE = (date: string) => join(dir(), `auto-${date}.json`);
+const readJsonFile = async (p: string) => JSON.parse(await readFile(p, "utf8").catch(() => "null"));
+
+/** Start the live batch run at the user's times, when it's safe; tell the user when a batch is ready. */
+export async function autoBatchTick(now = new Date()): Promise<string> {
+  const cfg = ((await readJsonFile(resolve(process.cwd(), "trader", "config.json"))) ?? {}) as Record<string, unknown>;
+  const ny = nyNow(now);
+  await notifyWhenReady(now);
+  if (cfg.auto_batch !== true || cfg.ibkr_orders !== true || String(cfg.broker ?? "").toLowerCase() !== "ibkr") return "off";
+  if (ny.weekend || !marketStatus(now.getTime()).open) return "market closed";
+  await mkdir(dir(), { recursive: true });
+  const doneDoc = ((await readJsonFile(AUTO_DONE(ny.date))) ?? { slots: [] }) as { slots: string[] };
+  const slot = dueSlot(parseAutoTimes(String(cfg.auto_batch_times ?? "")), ny.minute, doneDoc.slots);
+  if (!slot) return "no slot due";
+  const st = await state();
+  if (st && alive(st.pid)) return "a run is going";
+  // a batch is already waiting for the user (risk-checked within 15 minutes): don't replace it
+  const risk = await readJsonFile(resolve(process.cwd(), "trader", "state", "risk.json"));
+  const orders = await readJsonFile(resolve(process.cwd(), "trader", "orders.json"));
+  if (orders?.orders?.length && risk?.checked_at && now.getTime() - Date.parse(risk.checked_at) < 15 * 60_000) return "a batch is waiting";
+  doneDoc.slots.push(slot);
+  await writeFile(AUTO_DONE(ny.date), JSON.stringify(doneDoc));
+  const gw = await gatewayStatus().catch(() => ({ state: "down" as const }));
+  if (gw.state !== "ready") {
+    notifyMac("Dodona: IBKR gateway logged out", `The ${slot} batch didn't run. Log in at https://localhost:5001 (or say "refresh IBKR").`);
+    return "gateway not ready";
+  }
+  const r = await startLiveRun("live");
+  return r.ok ? `started ${slot}` : `not started: ${r.error}`;
+}
+
+const NOTIFIED = () => join(dir(), "notified.json");
+
+/** Once per risk check: if a batch is ready for the user, say so on this Mac. */
+async function notifyWhenReady(now: Date) {
+  const risk = await readJsonFile(resolve(process.cwd(), "trader", "state", "risk.json"));
+  const orders = await readJsonFile(resolve(process.cwd(), "trader", "orders.json"));
+  if (!risk?.checked_at || !orders?.orders?.length) return;
+  if (now.getTime() - Date.parse(risk.checked_at) > 15 * 60_000) return;
+  const seen = (await readJsonFile(NOTIFIED()))?.checked_at;
+  if (seen === risk.checked_at) return;
+  const passed = (risk.results ?? []).filter((r: { verdict?: string }) => r.verdict === "PASS").length;
+  if (!passed || passed !== orders.orders.length) return;
+  await mkdir(dir(), { recursive: true });
+  await writeFile(NOTIFIED(), JSON.stringify({ checked_at: risk.checked_at }));
+  const syms = orders.orders.map((o: { qty?: string; symbol?: string }) => `${o.qty} ${o.symbol}`).join(", ");
+  notifyMac("Dodona: IBKR batch ready", `${syms}. Approve on the Desk (IBKR orders) within 15 minutes, or it expires.`);
+}
+
+/** While Dodona runs, check every minute: the batch times, a batch to announce, the daily review. Safe to call often. */
+const TIMER_VERSION = 2; // bump when the tick changes, so a running Dodona swaps in the new one
 export function ensureReviewScheduler() {
-  if (g.__dodonaReviewTimer) return;
-  g.__dodonaReviewTimer = setInterval(() => void maybeStartReview().catch(() => undefined), 60_000);
+  if (g.__dodonaReviewTimer && g.__dodonaTimerVersion === TIMER_VERSION) return;
+  if (g.__dodonaReviewTimer) clearInterval(g.__dodonaReviewTimer);
+  g.__dodonaTimerVersion = TIMER_VERSION;
+  g.__dodonaReviewTimer = setInterval(() => {
+    void autoBatchTick().catch(() => undefined);
+    void maybeStartReview().catch(() => undefined);
+  }, 60_000);
   g.__dodonaReviewTimer.unref?.();
 }

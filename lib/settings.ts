@@ -74,6 +74,8 @@ export const RULE_SECTIONS: Section[] = [
     blurb: "Where real orders would go. Dodona's desk and the trade team stay on paper either way.",
     fields: [
       { key: "broker", label: "Broker", type: "choice", options: [{ value: "ibkr", label: "Interactive Brokers" }, { value: "alpaca", label: "Alpaca" }], help: "Which broker /trader-broker and Dodona's order ticket work with." },
+      { key: "auto_batch", label: "Prepare the batch by itself", type: "bool", help: "At the times below, Dodona starts the trade team (/trade-desk live) on its own, and puts a notification on this Mac when a batch is ready. It never places anything: you still approve each batch on the Desk, within 15 minutes. Needs Dodona running and the gateway logged in." },
+      { key: "auto_batch_times", label: "Batch times (New York)", type: "text", help: "When to prepare a batch, between 09:46 and 15:00, separated by commas. Each run uses your Claude plan." },
       { key: "ibkr_orders", label: "Send orders to IBKR", type: "bool", help: "Lets you place the order trader-risk passed from Dodona's Desk, through the IBKR gateway: only on your typed confirmation and click, and only to a paper account (DU…) while Paper trading is on." },
     ],
   },
