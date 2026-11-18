@@ -55,6 +55,17 @@ Haiku runs a script and reports its numbers; the script does the math, and the b
 news and earnings, where judgment matters. You, the lead, run on the session's model and make every
 call. If a Haiku report looks wrong or incomplete, re-run that one step yourself rather than trusting it.
 
+## Known quirks (save steps)
+
+- **The SEC contact** is `sec_user_agent` in `trader/config.json`; the news and analyst scripts read it
+  from there. Never probe environment variables (`$SEC_USER_AGENT`, `printenv`): background runs
+  block those commands.
+- **`news.py` exits with code 1 when there's nothing new.** That's its normal "no new headlines", not
+  a failure: read its output.
+- **`exit.py --stop`** takes `or-mid`, `or-low`, `price:X`, `pct:X` or `atr:K` (with the hyphen).
+- **One command per Bash call** in background runs: no `for` loops, no `$VAR`, no `&&` chains of skill
+  scripts. Each extra part needs an approval that nobody can give.
+
 ## How the team gets better every day
 
 - **The playbook.** Before anything else in every run, read `trader/playbook.md` (repo root) if it

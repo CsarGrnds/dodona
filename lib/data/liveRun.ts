@@ -15,7 +15,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { dueSlot, parseAutoTimes } from "../autoBatch";
 import { marketStatus } from "../clock";
-import { gatewayStatus } from "./ibkr";
+import { gatewayStatus, syncFromGateway } from "./ibkr";
 
 const dir = () => resolve(process.cwd(), "trader", "runs");
 const STATE = () => join(dir(), "live-run.json");
@@ -83,6 +83,8 @@ export async function startLiveRun(mode: RunMode = "live"): Promise<{ ok: boolea
   const st = await state();
   if (st && alive(st.pid)) return { ok: false, error: "A run is already going." };
   await mkdir(dir(), { recursive: true });
+  // the team sizes from, and leaves out, the real portfolio: refresh it from IBKR first (read-only)
+  if (mode === "live") await syncFromGateway().catch(() => undefined);
   const at = new Date();
   const log = join(dir(), `live-${at.toISOString().replace(/[:.]/g, "-")}.jsonl`);
   const fd = openSync(log, "a");
