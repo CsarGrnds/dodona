@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import { configPath, loadOrCreateDesk, readDeskRules } from "@/lib/data/desk";
 import { deskView } from "@/lib/data/deskView";
-import { ensureGatewayKeepAlive } from "@/lib/data/ibkr";
+import { ensureGatewayKeepAlive, gatewayStatus } from "@/lib/data/ibkr";
 import { ensureReviewScheduler } from "@/lib/data/liveRun";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +16,9 @@ export async function GET() {
     const s = await loadOrCreateDesk(rules);
     // the practice ledger is always paper; real orders (if turned on) go to IBKR from the IBKR panel
     const cfg = await readFile(configPath(), "utf8").then(JSON.parse).catch(() => ({}) as Record<string, unknown>);
-    const realOrders = { on: cfg.ibkr_orders === true && String(cfg.broker ?? "").toLowerCase() === "ibkr", live: cfg.paper === false };
+    const on = cfg.ibkr_orders === true && String(cfg.broker ?? "").toLowerCase() === "ibkr";
+    const gateway = on ? (await gatewayStatus().catch(() => ({ state: "down" as const }))).state : undefined;
+    const realOrders = { on, live: cfg.paper === false, gateway };
     return NextResponse.json({ ...deskView(s, rules, fromFile), realOrders }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });

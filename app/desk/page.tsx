@@ -223,6 +223,17 @@ export default function DeskPage() {
                 {d.realOrders.live ? "LIVE orders · IBKR" : "IBKR paper orders"}
               </a>
             )}
+            {d.realOrders?.on && d.realOrders.gateway && (
+              <a
+                href="https://localhost:5001"
+                target="_blank"
+                rel="noreferrer"
+                className={`pill ${d.realOrders.gateway === "ready" ? "ok" : "bad"}`}
+                title={d.realOrders.gateway === "ready" ? "The IBKR gateway is logged in." : "Click to open the gateway's login page (sign in, approve IBKR Mobile, wait for “Client login succeeds”). If it won't take, say “refresh IBKR” in Claude Code."}
+              >
+                {d.realOrders.gateway === "ready" ? "Gateway ✓ logged in" : d.realOrders.gateway === "login" ? "Gateway: LOG IN ↗" : "Gateway: DOWN"}
+              </a>
+            )}
             {d.driver === "team" ? (
               <span className="pill ok">✦ Claude Code trade team · /trade-desk</span>
             ) : (

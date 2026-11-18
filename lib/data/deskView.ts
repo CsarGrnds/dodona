@@ -34,4 +34,4 @@ export function deskView(s: DeskState, rules: DeskRules, rulesFromFile: boolean,
   };
 }
 
-export type DeskView = ReturnType<typeof deskView> & { realOrders?: { on: boolean; live: boolean } };
+export type DeskView = ReturnType<typeof deskView> & { realOrders?: { on: boolean; live: boolean; gateway?: "down" | "login" | "ready" } };
