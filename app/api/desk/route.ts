@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import { configPath, loadOrCreateDesk, readDeskRules } from "@/lib/data/desk";
 import { deskView } from "@/lib/data/deskView";
+import { ensureReviewScheduler } from "@/lib/data/liveRun";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/desk — the paper desk: account, open positions, trades, journal, daily P&L history.
 export async function GET() {
+  ensureReviewScheduler(); // the coach's daily review starts by itself after the close
   try {
     const { rules, fromFile } = await readDeskRules();
     const s = await loadOrCreateDesk(rules);

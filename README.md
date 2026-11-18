@@ -69,7 +69,8 @@ npm run dev                     # http://localhost:3000
 | `npm run ibkr -- status \| sync \| where` | IBKR gateway: is it logged in, sync positions, where it's installed |
 | `npm run sync:ibkr` | Turn the IBKR connector's saved output into `trader/portfolio.json` |
 | `npm run demo:portfolio` | Write a fictional portfolio at today's prices (`docs/demo/portfolio.json`) |
-| `npm run desk -- prep \| status \| book \| stop \| close \| log \| session start\|end \| driver \| stage add\|list\|drop\|done\|clear` | The paper desk from the command line, for the `/trade-desk` team (JSON out) |
+| `npm run desk -- prep \| status \| book \| stop \| close \| log \| session start\|end \| driver \| stage add\|list\|drop\|done\|clear \| candidate \| review` | The paper desk from the command line, for the `/trade-desk` team (JSON out) |
+| `npm run -s chart -- SYM [--trigger P --stop S --target T]` | Draw a stock's chart (daily, 15-minute, 5-minute) as a PNG for the chartist, plus its key numbers (JSON) |
 | `npm run screenshots` | Capture the README screenshots from a running demo server (the `dodona-demo` launch config); it refuses to run against a real portfolio |
 
 Check changes with real market data. `DODONA_MOCK=1 npm run dev` (synthetic data) is only for working offline.
@@ -262,6 +263,17 @@ Dodona's own skills, in the same folder:
 - **Trade team models:** the model each specialist runs on (the `model:` line in `.claude/agents/trade-*.md`).
 
 Values are checked as you type, across fields too (a day's loss limit can't be under one trade's, entries end before the flat-by time). Nothing is silently replaced. Saving keeps every other key in the file, leaves the previous version in `trader/config.prev.json`, and updates the trade team's paper workspace. The safety switches (paper, margin, short selling, options) are shown but can only be changed by you, in the file. `/api/settings` answers only localhost, and its save refuses requests from other websites.
+
+## How the team gets better every day
+
+The team learns from every candidate it looks at, taken or skipped, without waiting for you:
+
+- **Eyes: the chartist.** `npm run -s chart -- SYM --trigger P --stop S --target T` (`scripts/chart.ts`, `lib/chart.ts`) draws a real chart as a PNG: daily (60 sessions with the 20/50-day averages), 15-minute (5 sessions with VWAP) and today's 5-minute (VWAP, the opening range, the prior day's high and low, and the plan's trigger, stop and target). It also prints the numbers a chart reader wants: VWAP, the volume against the same time on past sessions, and the room to the nearest resistance above the trigger. The `trade-chartist` subagent reads the image the way a trader does and gives a 1–5 chart score; 1–2 is a skip.
+- **The market first.** Each run draws SPY and picks the day's mode (aggressive, normal, defensive). A defensive day takes only 4–5 charts, and at most one trade.
+- **Memory: every call is logged.** `npm run desk -- candidate …` records each candidate's plan, the call (take or skip), why, the chart score and the market mode in `trader/learning/candidates.jsonl`.
+- **The daily review.** After the close, `npm run desk -- review` (`lib/learning.ts`) replays every candidate on that day's real 5-minute bars: did it trigger, and did it hit the target, the stop, or sell at the close? It grades each call (a skipped loser is a right call) and adds up what works by setup, chart score and market mode, across all days. The `trade-coach` subagent turns that into **the playbook** (`trader/playbook.md`), which every member reads before the next run.
+- **No waiting.** Dodona starts the review (`/trade-desk review`) by itself at 4:10 PM New York on weekdays when the team logged candidates that day, as long as Dodona is running. The coach may only edit `trader/playbook.md`.
+- **Guardrails.** Lessons cite their evidence: a NOTE under 10 cases, a RULE at 10+, retired when the evidence turns. They can only make the team pickier: skip a setup, a time, a chart pattern or a market mode, or ask for more confirmation. They never change your risk limits, sizes, the daily limit or the paper/live switch.
 
 ## IBKR orders: the morning batch (off by default)
 

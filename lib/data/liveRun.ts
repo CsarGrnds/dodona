@@ -1,6 +1,8 @@
 // Server only. Starts the trade team as a background Claude Code session from the Desk's "Run desk
 // now" button (when the team drives the desk), and reports how it's going: `/trade-desk live` (the
-// LIVE MORNING batch for IBKR, when real orders are on) or `/trade-desk` (one paper cycle).
+// LIVE MORNING batch for IBKR, when real orders are on) or `/trade-desk` (one paper cycle). After the
+// close it also starts `/trade-desk review` by itself (the coach updates the playbook): see
+// ensureReviewScheduler.
 //
 // A live run only PREPARES: it scans, plans, sizes, stages the day's buy-stop brackets and gets
 // trader-risk's verdict. It can't place, change or cancel an order: it's allowed npm's desk and
@@ -22,7 +24,7 @@ interface RunState {
   mode?: RunMode;
 }
 
-export type RunMode = "live" | "paper";
+export type RunMode = "live" | "paper" | "review";
 
 export interface LiveRun {
   mode?: RunMode;
@@ -44,6 +46,8 @@ const ALLOWED = [
   "Bash(python3 .claude/skills/:*)",
   "Bash(cd:*)",
   "Bash(python3 ../../.claude/skills/:*)",
+  "Bash(npm run -s chart:*)",
+  "Bash(npm run chart:*)",
   "Read",
   "Glob",
   "Grep",
@@ -51,9 +55,12 @@ const ALLOWED = [
   "Task",
   "Skill",
 ];
+// the coach may edit the playbook, and nothing else
+const REVIEW_ALLOWED = ["Edit(trader/playbook.md)", "Write(trader/playbook.md)", "Edit(./trader/playbook.md)", "Write(./trader/playbook.md)"];
+const BLOCKED_ALWAYS = ["NotebookEdit", "WebFetch", "WebSearch", "Bash(curl:*)", "Bash(wget:*)", "Bash(rm:*)", "Bash(git:*)"];
 const BLOCKED = ["Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Bash(curl:*)", "Bash(wget:*)", "Bash(rm:*)", "Bash(git:*)"];
 const NOTE =
-  "You were started from Dodona's \"Run desk now\" button, with no one watching the chat. In LIVE MORNING mode your working directory is the repo root: run skill scripts as `python3 .claude/skills/<skill>/<script>.py …` (no cd), and tell every subagent the same, plus LIVE MORNING. In a paper cycle, skills run in trader/paper as usual (`cd trader/paper && python3 ../../.claude/skills/<skill>/<script>.py …`). Only stage, book on paper and check: never place, change or cancel an order (the user does that in Dodona). If a step needs the user (the gateway isn't logged in, it's outside the window), log it with `npm run desk -- log`, end the session, and stop.";
+  "You were started from Dodona's \"Run desk now\" button, with no one watching the chat. In LIVE MORNING mode your working directory is the repo root: run skill scripts as `python3 .claude/skills/<skill>/<script>.py …` (no cd), and tell every subagent the same, plus LIVE MORNING. In a paper cycle, skills run in trader/paper as usual (`cd trader/paper && python3 ../../.claude/skills/<skill>/<script>.py …`). Never put `$(...)` or backticks in a command (they can't be approved here), and tell every subagent the same. Dodona's own scripts (`npm run -s chart`, `npm run -s desk`) run from the repo root. Only stage, book on paper and check: never place, change or cancel an order (the user does that in Dodona). If a step needs the user (the gateway isn't logged in, it's outside the window), log it with `npm run desk -- log`, end the session, and stop.";
 
 const alive = (pid: number) => {
   try {
@@ -77,7 +84,20 @@ export async function startLiveRun(mode: RunMode = "live"): Promise<{ ok: boolea
   const fd = openSync(log, "a");
   const child = spawn(
     process.env.CLAUDE_BIN || "claude",
-    ["-p", mode === "live" ? "/trade-desk live" : "/trade-desk", "--output-format", "stream-json", "--verbose", "--allowedTools", ...ALLOWED, "--disallowedTools", ...BLOCKED, "--append-system-prompt", NOTE],
+    [
+      "-p",
+      mode === "live" ? "/trade-desk live" : mode === "review" ? "/trade-desk review" : "/trade-desk",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--allowedTools",
+      ...ALLOWED,
+      ...(mode === "review" ? REVIEW_ALLOWED : []),
+      "--disallowedTools",
+      ...(mode === "review" ? BLOCKED_ALWAYS : BLOCKED),
+      "--append-system-prompt",
+      NOTE,
+    ],
     { cwd: process.cwd(), detached: true, stdio: ["ignore", fd, fd], env: process.env },
   );
   closeSync(fd);
@@ -135,4 +155,35 @@ export async function liveRun(): Promise<LiveRun> {
   if (!st) return { running: false, lines: [] };
   const text = await readFile(st.log, "utf8").catch(() => "");
   return { running: alive(st.pid), mode: st.mode ?? "live", startedAt: st.startedAt, ...summarize(text) };
+}
+
+// ---------------------------------------------------------------- the daily review, on its own
+
+const REVIEW_DONE = () => join(dir(), "last-review.txt");
+const g = globalThis as unknown as { __dodonaReviewTimer?: ReturnType<typeof setInterval> };
+
+function nyNow(now = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now).map((x) => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, minute: Number(p.hour) * 60 + Number(p.minute), weekend: p.weekday === "Sat" || p.weekday === "Sun" };
+}
+
+/** Start today's review once, between 4:10 and 6 PM New York, if the team logged candidates today. */
+export async function maybeStartReview(now = new Date()): Promise<"started" | "not-yet" | "done" | "nothing" | "busy"> {
+  const ny = nyNow(now);
+  if (ny.weekend || ny.minute < 16 * 60 + 10 || ny.minute > 18 * 60) return "not-yet";
+  if ((await readFile(REVIEW_DONE(), "utf8").catch(() => "")).trim() === ny.date) return "done";
+  const st = await state();
+  if (st && alive(st.pid)) return "busy";
+  await mkdir(dir(), { recursive: true });
+  const logged = (await readFile(resolve(process.cwd(), "trader", "learning", "candidates.jsonl"), "utf8").catch(() => "")).includes(`"date":"${ny.date}"`);
+  await writeFile(REVIEW_DONE(), ny.date + "\n");
+  if (!logged) return "nothing";
+  return (await startLiveRun("review")).ok ? "started" : "busy";
+}
+
+/** While Dodona runs, check every minute whether today's review is due. Safe to call often. */
+export function ensureReviewScheduler() {
+  if (g.__dodonaReviewTimer) return;
+  g.__dodonaReviewTimer = setInterval(() => void maybeStartReview().catch(() => undefined), 60_000);
+  g.__dodonaReviewTimer.unref?.();
 }

@@ -101,6 +101,8 @@ export const TEAM: Array<{ agent: string; label: string; job: string; suggested:
   { agent: "trade-analyst", label: "Analyst", job: "Reads earnings trends", suggested: "sonnet" },
   { agent: "trade-budget", label: "Budget", job: "Sizes the order", suggested: "haiku" },
   { agent: "trade-risk", label: "Risk", job: "PASS or BLOCK", suggested: "haiku" },
+  { agent: "trade-chartist", label: "Chartist", job: "Reads the charts as images", suggested: "sonnet" },
+  { agent: "trade-coach", label: "Coach", job: "Daily review, writes the playbook", suggested: "opus" },
 ];
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;

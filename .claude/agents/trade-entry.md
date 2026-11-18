@@ -26,14 +26,16 @@ Skill: `trader-entry` (script `entry.py`). It writes `trader/paper/trader/entry.
 - Run every skill script in the workspace the lead names. By default that is the PAPER workspace:
 
   ```bash
-  cd "$(git rev-parse --show-toplevel)/trader/paper" && python3 ../../.claude/skills/<skill>/<script>.py …
+  cd trader/paper && python3 ../../.claude/skills/<skill>/<script>.py …
   ```
+
+  (Your working directory is the repo root. Never put `$(...)` or backticks in a command.)
 
   Only when the lead's prompt says **LIVE MORNING** (the real-account morning batch), run from the
   repo root instead, whose `trader/` holds the user's REAL IBKR portfolio and rules:
 
   ```bash
-  cd "$(git rev-parse --show-toplevel)" && python3 .claude/skills/<skill>/<script>.py …
+  python3 .claude/skills/<skill>/<script>.py …
   ```
 
   In LIVE MORNING mode, read every `trader/paper/trader/...` path in these instructions as

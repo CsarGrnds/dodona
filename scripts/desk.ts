@@ -11,8 +11,11 @@
 //   npm run desk -- session end --summary "…" [--status done|error]
 //   npm run desk -- driver team|auto             who makes entries: the team, or Dodona's own desk
 //   npm run desk -- stage add [--trigger P] | list | drop | done | clear   REAL account: stage the morning batch
-import { rename, readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+//   npm run desk -- candidate --symbol X --trigger P --stop S --target T --verdict take|skip --why "…" [--setup orb --mode live --chart-score 4 --market normal]
+//   npm run desk -- review [--date YYYY-MM-DD]     replay the day's candidates on real bars and grade the calls
+import { appendFile, mkdir, readdir, rename, readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { learningStats, replay, type Candidate, type Replay } from "../lib/learning";
 import { marketStatus, nextBell } from "../lib/clock";
 import {
   buyFill,
@@ -32,7 +35,7 @@ import {
   type DeskState,
   type Style,
 } from "../lib/desk";
-import { getQuote } from "../lib/data";
+import { getIntraday, getQuote } from "../lib/data";
 import { loadOrCreateDesk, readDeskRules, withDeskLock, writeDesk } from "../lib/data/desk";
 import { runDesk } from "../lib/data/deskRun";
 import { acceptTeamOrder, paperFile, paperRoot, writePaperWorkspace } from "../lib/data/paper";
@@ -191,6 +194,52 @@ async function main() {
         const kind = (flag("kind") ?? "text") as "text" | "decision" | "error";
         sess!.steps.push({ at, kind: ["text", "decision", "error"].includes(kind) ? kind : "text", agent: flag("agent") ?? "lead", title: flag("title") ?? "Note", detail: flag("text") });
         result = { ok: true, steps: sess!.steps.length };
+        break;
+      }
+
+      case "candidate": {
+        // Every candidate the team looks at, taken or skipped, for the daily review (trader/learning/).
+        const n = (k: string) => Number(flag(k));
+        const c: Candidate = {
+          at,
+          date: today,
+          mode: flag("mode") === "live" ? "live" : "paper",
+          symbol: (flag("symbol") ?? "").toUpperCase(),
+          setup: flag("setup") ?? "orb",
+          trigger: n("trigger"),
+          stop: n("stop"),
+          target: n("target"),
+          verdict: flag("verdict") === "take" ? "take" : "skip",
+          why: flag("why") ?? "",
+          ...(flag("chart-score") ? { chartScore: n("chart-score") } : {}),
+          ...(flag("market") ? { marketMode: flag("market") } : {}),
+        };
+        if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(c.symbol)) fail("--symbol is required");
+        if (!(c.trigger > c.stop && c.target > c.trigger)) fail("--trigger, --stop and --target are required (stop < trigger < target)");
+        if (!flag("verdict")) fail("--verdict take|skip is required");
+        const dir = resolve(process.cwd(), "trader", "learning");
+        await mkdir(dir, { recursive: true });
+        await appendFile(join(dir, "candidates.jsonl"), JSON.stringify(c) + "\n");
+        result = { ok: true, logged: c };
+        break;
+      }
+
+      case "review": {
+        // Replay every candidate of a day on its real 5-minute bars, grade the calls, add up what works.
+        const date = flag("date") ?? today;
+        const dir = resolve(process.cwd(), "trader", "learning");
+        const all = (await readFile(join(dir, "candidates.jsonl"), "utf8").catch(() => ""))
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l) as Candidate);
+        const day = all.filter((c) => c.date === date);
+        const replays: Replay[] = [];
+        for (const c of day) replays.push(replay(c, await getIntraday(c.symbol).catch(() => []), minuteOf(rules.flat_by)));
+        await mkdir(join(dir, "reviews"), { recursive: true });
+        if (day.length) await writeFile(join(dir, "reviews", `${date}.json`), JSON.stringify({ date, reviewed_at: at, replays }, null, 2) + "\n");
+        const history: Replay[] = [];
+        for (const f of (await readdir(join(dir, "reviews")).catch(() => [] as string[])).filter((f) => f.endsWith(".json"))) history.push(...(JSON.parse(await readFile(join(dir, "reviews", f), "utf8")).replays ?? []));
+        result = { date, candidates: day.length, replays: replays.map((r) => ({ symbol: r.symbol, mode: r.mode, verdict: r.verdict, outcome: r.outcome, R: r.R, triggeredAt: r.triggeredAt, exitAt: r.exitAt, rightCall: r.rightCall, chartScore: r.chartScore, why: r.why })), today: learningStats(replays), allTime: learningStats(history), playbook: "trader/playbook.md" };
         break;
       }
 

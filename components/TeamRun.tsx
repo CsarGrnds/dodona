@@ -41,7 +41,7 @@ export function TeamRunStatus({ tick }: { tick: number }) {
     <div className="tr-status small">
       <div className="row" style={{ gap: 6 }}>
         {r.running ? <><Spinner /> <b>Team working</b></> : <b>{r.error ? "Team run failed" : "Team run done"}</b>}
-        <span className="muted">· {r.mode === "paper" ? "paper cycle" : "IBKR batch"} · {time(r.startedAt)}{r.costUsd !== undefined ? ` · ≈ $${r.costUsd.toFixed(2)} at API prices` : ""}</span>
+        <span className="muted">· {r.mode === "paper" ? "paper cycle" : r.mode === "review" ? "daily review" : "IBKR batch"} · {time(r.startedAt)}{r.costUsd !== undefined ? ` · ≈ $${r.costUsd.toFixed(2)} at API prices` : ""}</span>
         {r.running && (
           <button className="btn small ghost" onClick={async () => { await fetch("/api/desk/prepare", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "stop" }) }); load(); }}>Stop</button>
         )}

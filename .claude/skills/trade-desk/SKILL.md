@@ -46,12 +46,34 @@ Day trading loses most people money; a good paper week is not proof.
 | `trade-analyst` | trader-analyst | Sonnet | Earnings trend (when SEC_USER_AGENT is set) |
 | `trade-budget` | trader-budget | Haiku | Shares inside the rules, one bracket order |
 | `trade-risk` | trader-risk | Haiku | PASS or BLOCK, the last word |
+| `trade-chartist` | Dodona's `npm run chart` | Sonnet | Reads the real charts as images: 1-5 chart score |
+| `trade-coach` | Dodona's `npm run desk -- review` | Opus | After the close: grades every call, writes the playbook |
 
 Each subagent runs on the cheapest model that does its job well (set in its `model:` frontmatter).
 Haiku runs a script and reports its numbers; the script does the math, and the booking check
 (trader-risk's fingerprint plus Dodona's own rules) is code, not a model's judgment. Sonnet reads
 news and earnings, where judgment matters. You, the lead, run on the session's model and make every
 call. If a Haiku report looks wrong or incomplete, re-run that one step yourself rather than trusting it.
+
+## How the team gets better every day
+
+- **The playbook.** Before anything else in every run, read `trader/playbook.md` (repo root) if it
+  exists. The coach writes it from the replays of every past candidate. Follow it: its lessons only
+  make you pickier (skip a setup, a time, a chart pattern, a market mode). It never overrides the
+  user's risk limits, sizes or the paper/live switch.
+- **The market first.** Draw SPY once per run: `npm run -s chart -- SPY`. From its `facts` (above or
+  below VWAP and the 20/50-day averages, today vs yesterday's range) pick the day's mode:
+  **aggressive** (SPY above VWAP and both averages), **defensive** (below VWAP and the 20-day average:
+  take only 4-5 charts, at most 1 trade), else **normal**. Log it, and pass it with every candidate.
+- **The chartist.** After `trade-exit` writes a plan, send the candidate to `trade-chartist` with the
+  trigger, stop and target. A chart score of 1-2 is a skip; 3 only with everything else strong.
+  If the chartist fails, go on without it and say so.
+- **Log every call, taken or skipped**, right after you decide, so the coach can replay it:
+  ```bash
+  npm run desk -- candidate --symbol X --setup orb --trigger P --stop S --target T \
+    --verdict take|skip --why "<the reasons, with the numbers>" --chart-score N --market <mode> [--mode live]
+  ```
+  Skips teach as much as trades. Log candidates that had a plan (trigger, stop, target).
 
 ## One cycle
 
@@ -82,12 +104,14 @@ All commands from the repo root. Every `npm run desk` command prints JSON.
 5. **Work the best candidates, one at a time, at most 3 per cycle.** For each:
    1. `trade-entry` → only TRIGGERED goes on.
    2. `trade-exit` → the plan. Stop on a refusal.
-   3. `trade-timemachine` with the flat-by time → odds, average R, history, verdict.
-   4. `trade-analyst` only if the news flags earnings within 5 trading days or you're considering
+   3. `trade-chartist` with the plan → chart score 1-5 and what it saw.
+   4. `trade-timemachine` with the flat-by time → odds, average R, history, verdict.
+   5. `trade-analyst` only if the news flags earnings within 5 trading days or you're considering
       a hold past today.
-   5. **Your call**, in the log, with the evidence: chart trigger quality, news, the Time Machine's
-      average R and history, the market. Skip coin flips and negative averages; skipping is a good trade.
-   6. To take it: `trade-budget` → `trade-risk`. Only on PASS:
+   6. **Your call**, in the log, with the evidence: the chart score, news, the Time Machine's average R
+      and history, the market mode, the playbook. Skip coin flips and negative averages; skipping is a
+      good trade. Log the candidate (`npm run desk -- candidate …`), taken or skipped.
+   7. To take it: `trade-budget` → `trade-risk`. Only on PASS:
       ```bash
       npm run desk -- book --style day --setup "<setup>" --thesis "<1-2 sentences: why, with the numbers>"
       ```
@@ -137,8 +161,9 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
       is the trigger. Already TRIGGERED means the move started without us: skip it.
    2. `trade-exit` with a plan-ahead entry at the trigger: `exit.py plan --from trader/entry.json
       --entry <TRIGGER> --write --json`.
-   3. `trade-timemachine` on that plan. Your call, logged with the numbers; skip coin flips and
-      negative averages.
+   3. `trade-chartist` on that plan (chart score 1-2 → skip), then `trade-timemachine`. Your call,
+      logged with the numbers (`npm run desk -- candidate … --mode live`, taken or skipped); skip coin
+      flips and negative averages.
    4. `trade-budget` (sizes at the trigger), then stage it:
       `npm run desk -- stage add --thesis "<1-2 sentences with the numbers>"`.
 4. `npm run desk -- stage done` (writes the batch to `trader/orders.json`), then `trade-risk` on the
@@ -150,6 +175,16 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
    check. If PushNotification is available, notify the user with the same one line.
 
 Never run this from `/loop` or a schedule: it ends with the user, not with you.
+
+## REVIEW mode (`/trade-desk review`): the coach, after the close
+
+Once a day after 4:05 PM New York (Dodona starts it by itself at 4:10 PM while it's running):
+
+1. `npm run desk -- session start --trigger "REVIEW: today's calls and the playbook"`
+2. Call `trade-coach`. It replays every candidate logged today on the real bars, grades the calls
+   and updates `trader/playbook.md`.
+3. Log its verdict and the lessons it added or changed, then end the session with a 2-3 sentence
+   summary. No candidates today: log that and end.
 
 ## Running it all day
 

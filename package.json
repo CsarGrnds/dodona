@@ -13,7 +13,8 @@
     "ibkr": "tsx scripts/ibkr-gateway.ts",
     "demo:portfolio": "tsx scripts/demo-portfolio.ts",
     "screenshots": "bash scripts/screenshots.sh",
-    "desk": "tsx scripts/desk.ts"
+    "desk": "tsx scripts/desk.ts",
+    "chart": "tsx scripts/chart.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.2.0",

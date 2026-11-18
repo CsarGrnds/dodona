@@ -17,7 +17,7 @@ export async function POST(req: Request) {
   const denied = fromDodonaPage(req);
   if (denied) return denied;
   const body = (await req.json().catch(() => null)) as { action?: string; mode?: string } | null;
-  if (body?.action === "start") return NextResponse.json(await startLiveRun(body.mode === "paper" ? "paper" : "live"));
+  if (body?.action === "start") return NextResponse.json(await startLiveRun(body.mode === "paper" ? "paper" : body.mode === "review" ? "review" : "live"));
   if (body?.action === "stop") return NextResponse.json({ ok: await stopLiveRun() });
   return NextResponse.json({ ok: false, error: "action: start or stop" }, { status: 400 });
 }
