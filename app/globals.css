@@ -393,3 +393,13 @@ ul.news li { margin-bottom: 4px; }
 .tr-last { font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
 .tr-next { text-align: right; max-width: 340px; }
 .tr-count { color: var(--accent); font-size: 13px; }
+
+/* Desk hero: the team's corner */
+.dk-hero-side { align-self: stretch; align-content: start; width: min(380px, 100%); }
+.tr-card { width: 100%; display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--panel-2) 80%, transparent); }
+.tr-card .tr-next, .tr-card .tr-status { max-width: none; text-align: left; justify-items: start; }
+.tr-card .tr-next { padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.tr-status .row { flex-wrap: wrap; row-gap: 2px; }
+.tr-result { line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+.tr-card .tr-last { max-width: 100%; }
+@media (max-width: 560px) { .dk-hero-side { width: 100%; } }

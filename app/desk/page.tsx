@@ -276,8 +276,10 @@ export default function DeskPage() {
               >
                 {teamBusy ? <Spinner /> : d.realOrders?.on ? (inBatchWindow() ? "Run desk now · prepare IBKR batch" : "IBKR batch: 9:46 AM–3 PM New York") : "Run desk now · team cycle"}
               </button>
-              {!!d.realOrders?.autoBatch?.length && <NextRunCountdown times={d.realOrders.autoBatch} />}
-              <TeamRunStatus tick={teamTick} />
+              <div className="tr-card">
+                {!!d.realOrders?.autoBatch?.length && <NextRunCountdown times={d.realOrders.autoBatch} />}
+                <TeamRunStatus tick={teamTick} />
+              </div>
             </>
           ) : (
             <button className="btn primary" onClick={run} disabled={running}>{running ? <><Spinner /> Running desk…</> : "Run desk now"}</button>

@@ -47,16 +47,23 @@ export function TeamRunStatus({ tick }: { tick: number }) {
   return (
     <div className="tr-status small">
       <div className="row" style={{ gap: 6 }}>
-        {r.running ? <><Spinner /> <b>Team working</b></> : <b>{r.error ? "Team run failed" : "Team run done"}</b>}
+        {r.running ? <><Spinner /> <b>Team working</b></> : <b>{r.error ? "Team run didn't finish" : "Team run done"}</b>}
         <span className="muted">· {r.mode === "paper" ? "paper cycle" : r.mode === "review" ? "daily review" : "IBKR batch"} · started {time(r.startedAt)}{r.costUsd !== undefined ? ` · ≈ $${r.costUsd.toFixed(2)} at API prices` : ""}</span>
         {r.running && (
           <button className="btn small ghost" onClick={async () => { await fetch("/api/desk/prepare", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "stop" }) }); load(); }}>Stop</button>
         )}
       </div>
       {r.running && r.lines.length > 0 && <div className="muted tr-last">{r.lines[r.lines.length - 1]}</div>}
-      {!r.running && (r.result || r.error) && <div className={r.error ? "err" : "muted"}>{(r.error ?? r.result ?? "").replace(/\*\*|`/g, "").slice(0, 400)}</div>}
+      {!r.running && (r.result || r.error) && <div className={`tr-result ${r.error ? "err" : "muted"}`}>{plainResult(r.error ?? r.result ?? "")}</div>}
     </div>
   );
+}
+
+/** The run's answer in plain words: Claude's plan limit gets a clear sentence, markdown is dropped. */
+function plainResult(text: string): string {
+  const limit = text.match(/(?:session|usage|rate) limit[^.]*?(?:resets? ([^.\n)]+))?/i);
+  if (limit) return `Your Claude plan's usage limit was reached${limit[1] ? ` (it resets ${limit[1].trim()})` : ""}, so the team couldn't run. Nothing was scanned or placed. Runs work again after the reset.`;
+  return text.replace(/\*\*|`/g, "").slice(0, 400);
 }
 
 /** "Next team run 12:00 New York · in 26:14", ticking every second. */
