@@ -16,7 +16,13 @@ export async function startTeamRun(mode: "live" | "paper"): Promise<{ ok: boolea
   }
 }
 
-const time = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "");
+const time = (iso?: string) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const local = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const ny = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "America/New_York" });
+  return `${local} your time · ${ny} New York`;
+};
 
 export function TeamRunStatus({ tick }: { tick: number }) {
   const [r, setR] = useState<LiveRun>();
@@ -42,7 +48,7 @@ export function TeamRunStatus({ tick }: { tick: number }) {
     <div className="tr-status small">
       <div className="row" style={{ gap: 6 }}>
         {r.running ? <><Spinner /> <b>Team working</b></> : <b>{r.error ? "Team run failed" : "Team run done"}</b>}
-        <span className="muted">· {r.mode === "paper" ? "paper cycle" : r.mode === "review" ? "daily review" : "IBKR batch"} · {time(r.startedAt)}{r.costUsd !== undefined ? ` · ≈ $${r.costUsd.toFixed(2)} at API prices` : ""}</span>
+        <span className="muted">· {r.mode === "paper" ? "paper cycle" : r.mode === "review" ? "daily review" : "IBKR batch"} · started {time(r.startedAt)}{r.costUsd !== undefined ? ` · ≈ $${r.costUsd.toFixed(2)} at API prices` : ""}</span>
         {r.running && (
           <button className="btn small ghost" onClick={async () => { await fetch("/api/desk/prepare", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "stop" }) }); load(); }}>Stop</button>
         )}
