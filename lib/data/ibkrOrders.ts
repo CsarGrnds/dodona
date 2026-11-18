@@ -170,7 +170,7 @@ export async function ibkrTicket(nowMs = Date.now()): Promise<IbkrTicket> {
       if (hit) problems.push(`${it.plan.symbol}: this exact order was already sent today (${hit.status} at ${hit.at.slice(11, 16)}); it is never sent twice.`);
     }
     for (const it of items) {
-      const fee = feeProblem(it.plan);
+      const fee = feeProblem(it.plan, Number(cfg.max_fee_pct) > 0 ? Number(cfg.max_fee_pct) / 100 : undefined);
       if (fee) problems.push(fee);
     }
     if (account) {

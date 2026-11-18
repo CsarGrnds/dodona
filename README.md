@@ -291,7 +291,7 @@ Every gate, every time:
 2. **Paper until you say otherwise:** while Paper trading is on (the default), it only sends to an IBKR paper account (DU…). Real money means setting `"paper": false` yourself, in `trader/config.json`; the page never does it.
 3. **trader-risk PASSED every order** (same fingerprints) in the last 15 minutes, together within your daily loss limit, while the market is open, and none was sent before.
 4. **Never a stock you already hold**, so a day trade's sell can't touch shares you keep. On a cash account, IBKR also refuses to sell shares you don't have.
-5. **Fees at most 25% of the risk.** IBKR charges at least $1.00 each way, so a trade risking $3.90 is refused (about $2 in fees).
+5. **Fees at most 25% of the risk** by default, or your own limit (Settings → Risk → **Max fees vs risk**). IBKR's fixed pricing charges at least $1.00 each way, so at 25% a trade risking $3.90 is refused (about $2 in fees). With a small budget, raising the limit lets trades through, but the fees then eat most of a win and nearly double a loss; IBKR's tiered pricing ($0.35 minimum) cuts them by about two thirds.
 6. **Your yes:** only a typed confirmation and a click on Dodona's page can place orders. Scripts, other websites and Claude are refused. Nothing scheduled ever places one.
 7. **IBKR's own questions** (market data warnings, price caps…) come back to you to confirm or skip, one by one.
 

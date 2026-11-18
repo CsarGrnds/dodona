@@ -41,6 +41,7 @@ export const RULE_SECTIONS: Section[] = [
     fields: [
       { key: "max_loss_per_trade_usd", label: "Max loss per trade", type: "usd", min: 0.01, help: "What one trade may lose if the stop fills at the stop. Sizes every trade." },
       { key: "max_daily_loss_usd", label: "Max loss per day", type: "usd", min: 0.01, help: "Losses taken plus the risk still open. Once reached, no new entries today." },
+      { key: "max_fee_pct", label: "Max fees vs risk", type: "pct", min: 5, max: 300, help: "IBKR commissions (in and out) may be at most this share of a trade's max loss; above it, real orders are refused. 25% is the safe default: at 100%+ a winning trade barely pays for its fees, and a losing one costs about double." },
       { key: "min_reward_risk", label: "Min reward : risk", type: "ratio", min: 0, max: 20, help: "The target must be at least this many times the risk (1.0 = 1R)." },
       { key: "require_stop", label: "Require a stop", type: "bool", help: "Every entry must carry a stop-loss. Strongly recommended." },
     ],

@@ -109,3 +109,11 @@ test("team run: the background session's log reads as steps and an answer", asyn
   assert.equal(r.costUsd, 0.31);
   assert.equal(r.error, undefined);
 });
+
+test("ibkr: the fee limit is the user's setting when they set one", async () => {
+  const { feeProblem } = await import("../lib/ibkrOrder");
+  const small = { symbol: "AS", qty: 4, entry: 30.9, trigger: 30.9, stop: 30.45, target: 31.8 }; // $1.80 risk, $2 fees
+  assert.match(feeProblem(small) ?? "", /at most 25%/);
+  assert.match(feeProblem(small, 1) ?? "", /at most 100%/);
+  assert.equal(feeProblem(small, 1.2), undefined);
+});

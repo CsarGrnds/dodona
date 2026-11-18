@@ -28,7 +28,7 @@ export async function readSettings() {
   const { cfg, fromFile } = await readConfigRaw();
   const desk = await readDesk().catch(() => null);
   return {
-    rules: { ...DEFAULT_DESK_RULES, max_orders_per_day: 10, broker: "alpaca", ibkr_orders: false, ...cfg },
+    rules: { ...DEFAULT_DESK_RULES, max_orders_per_day: 10, broker: "alpaca", ibkr_orders: false, max_fee_pct: 25, ...cfg },
     locked: LOCKED.map((l) => ({ ...l, value: cfg[l.key] ?? l.safe })),
     fromFile,
     file: "trader/config.json",

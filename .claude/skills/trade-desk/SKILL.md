@@ -145,9 +145,10 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
   touch `"paper"`.
 - Skip any stock the user already holds (`trader/portfolio.json`): Dodona refuses them, so a day
   trade's sell can never touch shares they keep.
-- Skip trades too small to pay for themselves: IBKR charges at least $1.00 each way, and Dodona
-  refuses a trade whose fees (about $2 in and out) are over 25% of its max loss, so the max loss must
-  be at least about $8.
+- Skip trades too small to pay for themselves: IBKR charges at least $1.00 each way (fixed pricing),
+  and Dodona refuses a trade whose fees (about $2 in and out) are over the user's "max_fee_pct" of its
+  max loss (Settings → Risk → Max fees vs risk; 25% if unset). Read it from `trader/config.json`, and
+  say in your summary when fees are what stopped a trade.
 
 0. **The IBKR gateway must be logged in first**, so the user can approve the batch within 15
    minutes of the risk check: `npm run -s ibkr -- status`. Not `READY`? Follow `/ibkr-gateway` (it

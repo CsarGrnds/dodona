@@ -114,12 +114,12 @@ export function ibkrFeeEstimate(qty: number, price: number): number {
   const side = Math.min(Math.max(1, 0.005 * qty), 0.01 * qty * price);
   return cents(2 * side);
 }
-/** The same rule as the paper desk: fees may be at most a quarter of what the trade risks. */
+/** Fees may be at most this share of what the trade risks: 25% by default (the paper desk's rule), or the user's own "max_fee_pct" from Settings. */
 export const MAX_FEE_SHARE = 0.25;
-export function feeProblem(p: BracketPlan): string | undefined {
+export function feeProblem(p: BracketPlan, maxShare = MAX_FEE_SHARE): string | undefined {
   const fee = ibkrFeeEstimate(p.qty, entryRef(p));
   const risk = maxLossOf(p);
-  return fee > risk * MAX_FEE_SHARE ? `${p.symbol}: about $${fee.toFixed(2)} in IBKR commissions (in and out) against $${risk.toFixed(2)} of risk; fees may be at most ${MAX_FEE_SHARE * 100}% of the risk, so the trade is too small to pay for itself.` : undefined;
+  return fee > risk * maxShare ? `${p.symbol}: about $${fee.toFixed(2)} in IBKR commissions (in and out) against $${risk.toFixed(2)} of risk; your limit is fees at most ${Math.round(maxShare * 100)}% of the risk (Settings → Risk → Max fees vs risk).` : undefined;
 }
 
 type QS = { qty: number; symbol: string };
