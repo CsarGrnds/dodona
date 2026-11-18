@@ -51,3 +51,18 @@ test("chart: sessions, facts and an SVG with the plan's lines", () => {
   assert.match(svg, /trigger 10\.50/);
   assert.match(svg, /OR high/);
 });
+
+test("pending: a formed range still under its high, above VWAP; broken or weak ones say why", async () => {
+  const { pendingRange, isPending } = await import("../lib/pending");
+  const now = Date.parse("2026-11-18T15:05:00Z"); // 10:05 New York: 6 completed bars
+  const base = [bar("09:30", 10, 10.2, 9.9, 10.1), bar("09:35", 10.1, 10.3, 10.05, 10.2), bar("09:40", 10.2, 10.25, 10.1, 10.15)];
+  const ok = pendingRange("X", [...base, bar("09:45", 10.15, 10.28, 10.12, 10.22), bar("09:50", 10.22, 10.29, 10.2, 10.27), bar("09:55", 10.27, 10.3, 10.22, 10.26)], { nowMs: now });
+  assert.ok(isPending(ok));
+  if (isPending(ok)) assert.deepEqual([ok.orHigh, ok.orLow, ok.bars], [10.3, 9.9, 6]);
+  const broke = pendingRange("X", [...base, bar("09:45", 10.2, 10.4, 10.2, 10.35)], { nowMs: now });
+  assert.equal("why" in broke && broke.why, "already broke out");
+  const far = pendingRange("X", [...base, bar("09:45", 10.1, 10.1, 9.95, 9.96)], { nowMs: now });
+  assert.ok("why" in far);
+  const early = pendingRange("X", base.slice(0, 2), { nowMs: Date.parse("2026-11-18T14:40:00Z") });
+  assert.equal("why" in early && early.why, "the opening range hasn't formed yet");
+});

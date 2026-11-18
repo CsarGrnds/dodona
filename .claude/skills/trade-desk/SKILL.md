@@ -138,8 +138,8 @@ you prepare the day's REAL trades for the user to approve once. You still never 
 send an order: the user does that by hand in Dodona's IBKR panel, and the orders then wait at IBKR
 as buy-stops (each buys only if its breakout triggers, with its stop, target and a sell at the close).
 
-- Run it once, after the opening range: between 9:50 and 10:30 AM New York time. Outside that
-  window, say so and stop.
+- Run it any time between 9:46 AM and 3:00 PM New York (right after the opening range forms is best:
+  most breakouts come early). Outside that window, say so and stop.
 - Skills run from the **repo root** (the real portfolio and rules). Tell every subagent, in its
   prompt: **"LIVE MORNING: run from the repo root."** Never edit `trader/config.json`, and never
   touch `"paper"`.
@@ -155,12 +155,19 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
    Best done before 9:30 AM New York, while the opening range forms.
 1. `npm run desk -- session start --trigger "LIVE MORNING: today's real-account batch"`, then
    `npm run desk -- stage clear`.
-2. `trade-scanner` (ORB scan) → `trade-news` on its candidates; drop AVOIDs. Log both.
+2. Find ranges that have formed but NOT broken yet (the scanner skill only lists breakouts that
+   already happened, too late for an order that waits at IBKR):
+   ```bash
+   npm run -s desk -- pending
+   ```
+   It checks the whole market in seconds and returns the best few (`pending`): each with its range
+   high (`orHigh`, the trigger), range low, VWAP, relative volume and how far it is under the trigger.
+   Stocks the user holds and blocked tickers are already left out. Then `trade-news` on them; drop
+   AVOIDs. Log both.
 3. For the best candidates, one at a time, at most the trades left today (`max_trades_per_day`):
-   1. `trade-entry`: the opening range must be formed and NOT yet broken (WAITING). Its range high
-      is the trigger. Already TRIGGERED means the move started without us: skip it.
-   2. `trade-exit` with a plan-ahead entry at the trigger: `exit.py plan --from trader/entry.json
-      --entry <TRIGGER> --write --json`.
+   1. (No `trade-entry` here: `pending` already confirmed the range is formed and unbroken.)
+   2. `trade-exit` with a plan-ahead entry at the range high: `exit.py plan --symbol <SYM> --entry
+      <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb --write --json`.
    3. `trade-chartist` on that plan (chart score 1-2 → skip), then `trade-timemachine`. Your call,
       logged with the numbers (`npm run desk -- candidate … --mode live`, taken or skipped); skip coin
       flips and negative averages.

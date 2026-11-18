@@ -16,6 +16,7 @@
 import { appendFile, mkdir, readdir, rename, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { learningStats, replay, type Candidate, type Replay } from "../lib/learning";
+import { scanPending } from "../lib/data/pending";
 import { marketStatus, nextBell } from "../lib/clock";
 import {
   buyFill,
@@ -194,6 +195,17 @@ async function main() {
         const kind = (flag("kind") ?? "text") as "text" | "decision" | "error";
         sess!.steps.push({ at, kind: ["text", "decision", "error"].includes(kind) ? kind : "text", agent: flag("agent") ?? "lead", title: flag("title") ?? "Note", detail: flag("text") });
         result = { ok: true, steps: sess!.steps.length };
+        break;
+      }
+
+      case "pending": {
+        // Opening ranges formed but NOT broken yet, market-wide: the candidates for buy-stop orders.
+        const real = (p: string) => resolve(process.cwd(), "trader", p);
+        const pf = JSON.parse(await readFile(real("portfolio.json"), "utf8").catch(() => "null"));
+        const held = ((pf?.positions ?? []) as Array<{ ticker?: string }>).map((p) => String(p.ticker ?? "").toUpperCase()).filter(Boolean);
+        const maxPrice = Number(flag("max-price")) || Math.min((rules.budget * (1 - rules.cash_buffer_pct / 100)), (rules.budget * rules.max_position_pct) / 100, rules.max_order_usd);
+        const scan = await scanPending({ maxPrice, exclude: [...held, ...rules.blocked], limit: Number(flag("limit")) || 8 });
+        result = { ...scan, maxPrice, excludedHeld: held.length, next: "for the best ones: trade-chartist, then trade-exit with --entry <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb, Time Machine, budget, stage add" };
         break;
       }
 

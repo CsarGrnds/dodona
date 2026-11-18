@@ -30,11 +30,11 @@ const tone = (v: number) => (v > 0 ? "up" : v < 0 ? "down" : "muted");
 const nyTime = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 const nyDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-/** The live morning batch is built once, after the opening range: 9:50–10:30 AM New York, weekdays. */
+/** The live batch can be built after the opening range forms, until 3 PM New York, weekdays. */
 function inBatchWindow(now = new Date()) {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now).map((x) => [x.type, x.value]));
   const m = Number(p.hour) * 60 + Number(p.minute);
-  return !["Sat", "Sun"].includes(p.weekday) && m >= 9 * 60 + 50 && m <= 10 * 60 + 30;
+  return !["Sat", "Sun"].includes(p.weekday) && m >= 9 * 60 + 46 && m <= 15 * 60;
 }
 
 export default function DeskPage() {
@@ -263,7 +263,7 @@ export default function DeskPage() {
                   setTeamTick((x) => x + 1);
                 }}
               >
-                {teamBusy ? <Spinner /> : d.realOrders?.on ? (inBatchWindow() ? "Run desk now · prepare IBKR batch" : "IBKR batch: 9:50–10:30 AM New York") : "Run desk now · team cycle"}
+                {teamBusy ? <Spinner /> : d.realOrders?.on ? (inBatchWindow() ? "Run desk now · prepare IBKR batch" : "IBKR batch: 9:46 AM–3 PM New York") : "Run desk now · team cycle"}
               </button>
               <TeamRunStatus tick={teamTick} />
             </>
