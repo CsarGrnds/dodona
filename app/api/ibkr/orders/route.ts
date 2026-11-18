@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ensureGatewayKeepAlive } from "@/lib/data/ibkr";
 import { abandonBatch, answerQuestion, cancelUnfilled, ibkrActivity, ibkrTicket, placeTicket, previewTicket } from "@/lib/data/ibkrOrders";
 import { fromDodonaPage, localOnly, localWrite } from "@/lib/data/localOnly";
 
@@ -10,6 +11,7 @@ export const dynamic = "force-dynamic";
 // POST {action:"place", fingerprints, typed} / {action:"answer", id, confirmed} / {action:"cancel"} /
 // {action:"abandon"} — only from a click in Dodona's page. See lib/data/ibkrOrders.ts for every gate.
 export async function GET(req: Request) {
+  ensureGatewayKeepAlive();
   const denied = localOnly(req);
   if (denied) return denied;
   const ticket = await ibkrTicket();

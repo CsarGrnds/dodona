@@ -177,3 +177,17 @@ export async function gatewayAuth(): Promise<{ authenticated: boolean; connected
   const st = await call<{ authenticated?: boolean; connected?: boolean; competing?: boolean; serverInfo?: { serverName?: string } }>("GET", "/v1/api/iserver/auth/status");
   return { authenticated: !!st.authenticated, connected: !!st.connected, competing: !!st.competing, serverName: st.serverInfo?.serverName };
 }
+
+// ---------------------------------------------------------------- keep the session alive
+
+const ka = globalThis as unknown as { __dodonaIbkrKeepAlive?: ReturnType<typeof setInterval> };
+
+/**
+ * IBKR ends a gateway session that sits idle for a few minutes. While Dodona runs, ping it once a
+ * minute (POST /tickle, read-only) so the login lasts the trading day. Safe to call often.
+ */
+export function ensureGatewayKeepAlive() {
+  if (ka.__dodonaIbkrKeepAlive) return;
+  ka.__dodonaIbkrKeepAlive = setInterval(() => void call("POST", "/v1/api/tickle", 10_000).catch(() => undefined), 60_000);
+  ka.__dodonaIbkrKeepAlive.unref?.();
+}
