@@ -41,6 +41,7 @@ export const RULE_SECTIONS: Section[] = [
     fields: [
       { key: "max_loss_per_trade_usd", label: "Max loss per trade", type: "usd", min: 0.01, help: "What one trade may lose if the stop fills at the stop. Sizes every trade." },
       { key: "max_daily_loss_usd", label: "Max loss per day", type: "usd", min: 0.01, help: "Losses taken plus the risk still open. Once reached, no new entries today." },
+      { key: "max_fee_pct", label: "Max fees vs risk", type: "pct", min: 5, max: 300, help: "IBKR commissions (in and out) may be at most this share of a trade's max loss; above it, real orders are refused. 25% is the safe default: at 100%+ a winning trade barely pays for its fees, and a losing one costs about double." },
       { key: "min_reward_risk", label: "Min reward : risk", type: "ratio", min: 0, max: 20, help: "The target must be at least this many times the risk (1.0 = 1R)." },
       { key: "require_stop", label: "Require a stop", type: "bool", help: "Every entry must carry a stop-loss. Strongly recommended." },
     ],
@@ -73,6 +74,8 @@ export const RULE_SECTIONS: Section[] = [
     blurb: "Where real orders would go. Dodona's desk and the trade team stay on paper either way.",
     fields: [
       { key: "broker", label: "Broker", type: "choice", options: [{ value: "ibkr", label: "Interactive Brokers" }, { value: "alpaca", label: "Alpaca" }], help: "Which broker /trader-broker and Dodona's order ticket work with." },
+      { key: "auto_batch", label: "Prepare the batch by itself", type: "bool", help: "At the times below, Dodona starts the trade team (/trade-desk live) on its own, and puts a notification on this Mac when a batch is ready. It never places anything: you still approve each batch on the Desk, within 15 minutes. Needs Dodona running and the gateway logged in." },
+      { key: "auto_batch_times", label: "Batch times (New York)", type: "text", help: "When to prepare a batch, between 09:46 and 15:00, separated by commas. Each run uses your Claude plan." },
       { key: "ibkr_orders", label: "Send orders to IBKR", type: "bool", help: "Lets you place the order trader-risk passed from Dodona's Desk, through the IBKR gateway: only on your typed confirmation and click, and only to a paper account (DU…) while Paper trading is on." },
     ],
   },
@@ -101,6 +104,8 @@ export const TEAM: Array<{ agent: string; label: string; job: string; suggested:
   { agent: "trade-analyst", label: "Analyst", job: "Reads earnings trends", suggested: "sonnet" },
   { agent: "trade-budget", label: "Budget", job: "Sizes the order", suggested: "haiku" },
   { agent: "trade-risk", label: "Risk", job: "PASS or BLOCK", suggested: "haiku" },
+  { agent: "trade-chartist", label: "Chartist", job: "Reads the charts as images", suggested: "sonnet" },
+  { agent: "trade-coach", label: "Coach", job: "Daily review, writes the playbook", suggested: "opus" },
 ];
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;

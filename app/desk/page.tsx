@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentSessionView, AgentToolbox } from "@/components/AgentSessionView";
 import { IbkrOrderPanel } from "@/components/IbkrOrderPanel";
+import { NextRunCountdown, TeamRunStatus, startTeamRun } from "@/components/TeamRun";
 import { ClaudeSessionView, TEAM_MODEL, TeamSessionView, type ClaudeSessionInfo } from "@/components/TeamSessionView";
 import { DailyPnlChart, EquityChart, PnlCalendar, RDistribution, signedUsd } from "@/components/DeskCharts";
 import { Brand, Spinner } from "@/components/ui";
@@ -29,11 +30,20 @@ const tone = (v: number) => (v > 0 ? "up" : v < 0 ? "down" : "muted");
 const nyTime = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 const nyDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
+/** The live batch can be built after the opening range forms, until 3 PM New York, weekdays. */
+function inBatchWindow(now = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now).map((x) => [x.type, x.value]));
+  const m = Number(p.hour) * 60 + Number(p.minute);
+  return !["Sat", "Sun"].includes(p.weekday) && m >= 9 * 60 + 46 && m <= 15 * 60;
+}
+
 export default function DeskPage() {
   const [d, setD] = useState<DeskView>();
   const [report, setReport] = useState<RunReport>();
   const [err, setErr] = useState<string>();
   const [running, setRunning] = useState(false);
+  const [teamBusy, setTeamBusy] = useState(false);
+  const [teamTick, setTeamTick] = useState(0);
   const [auto, setAuto] = useState(false);
   const [chart, setChart] = useState<"equity" | "daily">("equity");
   const [feed, setFeed] = useState<"all" | "trades" | "claude">("all");
@@ -207,7 +217,23 @@ export default function DeskPage() {
       <section className={`panel dk-hero ${today ? (today.pnl >= 0 ? "green" : "red") : ""}`}>
         <div className="dk-hero-main">
           <div className="row" style={{ gap: 8 }}>
-            <span className="pill act">PAPER</span>
+            <span className="pill act" title="This panel, the charts and the history are Dodona's practice ledger: paper money, real prices.">PAPER desk</span>
+            {d.realOrders?.on && (
+              <a href="#ibkr-orders" className={`pill ${d.realOrders.live ? "bad" : "ok"}`} title="Real orders go to Interactive Brokers from the IBKR orders panel below, only when you approve them.">
+                {d.realOrders.live ? "LIVE orders · IBKR" : "IBKR paper orders"}
+              </a>
+            )}
+            {d.realOrders?.on && d.realOrders.gateway && (
+              <a
+                href="https://localhost:5001"
+                target="_blank"
+                rel="noreferrer"
+                className={`pill ${d.realOrders.gateway === "ready" ? "ok" : "bad"}`}
+                title={d.realOrders.gateway === "ready" ? "The IBKR gateway is logged in." : "Click to open the gateway's login page (sign in, approve IBKR Mobile, wait for “Client login succeeds”). If it won't take, say “refresh IBKR” in Claude Code."}
+              >
+                {d.realOrders.gateway === "ready" ? "Gateway ✓ logged in" : d.realOrders.gateway === "login" ? "Gateway: LOG IN ↗" : "Gateway: DOWN"}
+              </a>
+            )}
             {d.driver === "team" ? (
               <span className="pill ok">✦ Claude Code trade team · /trade-desk</span>
             ) : (
@@ -234,9 +260,32 @@ export default function DeskPage() {
           </div>
         </div>
         <div className="dk-hero-side">
-          <button className="btn primary" onClick={run} disabled={running}>{running ? <><Spinner /> Running desk…</> : "Run desk now"}</button>
+          {d.driver === "team" ? (
+            <>
+              <button
+                className={`btn ${d.realOrders?.on ? "danger" : "primary"}`}
+                disabled={teamBusy || (!!d.realOrders?.on && !inBatchWindow())}
+                title={d.realOrders?.on ? "Starts /trade-desk live in Claude Code: the team prepares today's IBKR batch for you to approve below. It places nothing." : "Starts /trade-desk in Claude Code: one paper cycle by the team."}
+                onClick={async () => {
+                  setTeamBusy(true);
+                  const r = await startTeamRun(d.realOrders?.on ? "live" : "paper");
+                  if (!r.ok) setErr(r.error);
+                  setTeamBusy(false);
+                  setTeamTick((x) => x + 1);
+                }}
+              >
+                {teamBusy ? <Spinner /> : d.realOrders?.on ? (inBatchWindow() ? "Run desk now · prepare IBKR batch" : "IBKR batch: 9:46 AM–3 PM New York") : "Run desk now · team cycle"}
+              </button>
+              <div className="tr-card">
+                {!!d.realOrders?.autoBatch?.length && <NextRunCountdown times={d.realOrders.autoBatch} />}
+                <TeamRunStatus tick={teamTick} />
+              </div>
+            </>
+          ) : (
+            <button className="btn primary" onClick={run} disabled={running}>{running ? <><Spinner /> Running desk…</> : "Run desk now"}</button>
+          )}
           <label className="dk-auto">
-            <input type="checkbox" checked={auto} onChange={toggleAuto} /> Auto every 5 min
+            <input type="checkbox" checked={auto} onChange={toggleAuto} /> {d.driver === "team" ? "Manage paper positions every 5 min" : "Auto every 5 min"}
           </label>
           <div className="muted small">
             Last run {fmt.ago(d.lastRunAt)}

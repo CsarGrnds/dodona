@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { newDesk, openPosition } from "../lib/desk";
+import { acceptBatch } from "../lib/data/ibkrOrders";
 import { acceptTeamOrder, brokerState, orderFingerprint, paperPortfolio } from "../lib/data/paper";
 import { firstPrompt, isSessionId, projectSlug, stepsFrom, teamModels, usageFrom } from "../lib/data/transcripts";
 
@@ -21,7 +22,7 @@ test("each specialist runs on a model sized to its job", async () => {
   const m = await teamModels();
   assert.deepEqual(
     Object.fromEntries(Object.entries(m).sort()),
-    { "trade-analyst": "sonnet", "trade-budget": "haiku", "trade-entry": "haiku", "trade-exit": "haiku", "trade-news": "sonnet", "trade-risk": "haiku", "trade-scanner": "haiku", "trade-timemachine": "haiku" },
+    { "trade-analyst": "sonnet", "trade-budget": "haiku", "trade-chartist": "sonnet", "trade-coach": "opus", "trade-entry": "haiku", "trade-exit": "haiku", "trade-news": "sonnet", "trade-risk": "haiku", "trade-scanner": "haiku", "trade-timemachine": "haiku" },
   );
 });
 
@@ -105,4 +106,23 @@ test("transcripts: the lead's steps, delegations and the subagents' reports", ()
   assert.equal(steps[4].detail, "VERDICT: coin flip");
   assert.equal(steps[6].ok, false);
   assert.deepEqual(delegates.map((d) => d.agent), ["trade-timemachine"]);
+});
+
+test("ibkr batch: every order must PASS trader-risk, recently, as buy brackets in different stocks", () => {
+  const now = Date.parse("2026-11-18T15:00:00Z");
+  const stopEntry = { ...ORDER, type: "stop", stop_price: "364.18" };
+  const F = { ...ORDER, symbol: "F", qty: "5", stop_loss_stop_price: "11.00", take_profit_limit_price: "12.00", type: "stop", stop_price: "11.40", plan: { entry: 11.4, stop: 11, target: 12 } };
+  const risk = (orders: Array<Record<string, unknown>>, verdicts: string[], at = "2026-11-18T14:55:00Z") => ({ checked_at: at, results: orders.map((o, i) => ({ fingerprint: orderFingerprint(o), verdict: verdicts[i], reasons: verdicts[i] === "BLOCK" ? ["over the daily limit"] : [] })) });
+  const ok = acceptBatch({ orders: [stopEntry, F] }, risk([stopEntry, F], ["PASS", "PASS"]), now);
+  assert.ok(ok.ok);
+  if (ok.ok) {
+    assert.deepEqual(ok.items.map((x) => [x.plan.symbol, x.plan.qty, x.plan.trigger, x.plan.closeAtEnd, x.maxLoss]), [["TSLA", 8, 364.18, true, 46.88], ["F", 5, 11.4, true, 2]]);
+  }
+  const why = (r: ReturnType<typeof acceptBatch>) => (r.ok ? "" : r.reason);
+  assert.match(why(acceptBatch({ orders: [stopEntry, F] }, risk([stopEntry, F], ["PASS", "BLOCK"]), now)), /F: trader-risk said BLOCK/);
+  assert.match(why(acceptBatch({ orders: [stopEntry, F] }, risk([stopEntry], ["PASS"]), now)), /F: trader-risk checked a different order/);
+  assert.match(why(acceptBatch({ orders: [stopEntry, stopEntry] }, risk([stopEntry, stopEntry], ["PASS", "PASS"]), now)), /twice/);
+  assert.match(why(acceptBatch({ orders: [stopEntry] }, risk([stopEntry], ["PASS"], "2026-11-18T14:00:00Z"), now)), /minutes old/);
+  assert.match(why(acceptBatch({ orders: [{ ...stopEntry, type: "trailing_stop" }] }, risk([{ ...stopEntry, type: "trailing_stop" }], ["PASS"]), now)), /isn't supported/);
+  assert.match(why(acceptBatch({ orders: [{ ...stopEntry, side: "sell" }] }, risk([{ ...stopEntry, side: "sell" }], ["PASS"]), now)), /only buys/);
 });

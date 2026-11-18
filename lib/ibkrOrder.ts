@@ -1,25 +1,31 @@
-// Pure: turning trader-budget's one bracket order (Alpaca's shape, checked by trader-risk) into
+// Pure: turning trader-budget's bracket orders (Alpaca's shape, checked by trader-risk) into
 // Interactive Brokers' Client Portal Web API orders, and reading what IBKR answers.
 //
-// An IBKR bracket is three orders sent together: the parent (the buy) and two children that name
-// it as their parentId: a take-profit limit sell and a stop-loss stop sell. IBKR links the children
-// so one cancels the other, and only works them once the parent fills.
+// An IBKR bracket is sent as one request: the parent (the buy) and children that name it as their
+// parentId: a take-profit limit sell, a stop-loss stop sell and, for a day trade, a market-on-close
+// sell. Children only work once the parent fills. Per IBKR's docs, children carry no cOID of their
+// own, and only one bracket goes in a request.
+//
+// The entry can be a market buy, a limit buy, or a buy-STOP: the order waits at IBKR and buys the
+// moment the price trades at the trigger, so a breakout is never missed while you are away.
 
 export interface BracketPlan {
   symbol: string;
   qty: number;
   stop: number;
   target: number;
-  entry: number; // the plan's entry, for the max loss
-  limit?: number; // a limit entry; market when absent
+  entry: number; // the plan's entry (for a buy-stop: the trigger), for the max loss
+  limit?: number; // a limit entry
+  trigger?: number; // a buy-stop entry: buys at market once the price trades at or above it
+  closeAtEnd?: boolean; // a day trade: sell at the close (MOC) if neither the stop nor the target filled
 }
 
 export interface IbkrOrder {
   acctId: string;
   conid: number;
-  cOID: string;
+  cOID?: string;
   parentId?: string;
-  orderType: "MKT" | "LMT" | "STP";
+  orderType: "MKT" | "LMT" | "STP" | "MOC";
   side: "BUY" | "SELL";
   quantity: number;
   price?: number;
@@ -32,26 +38,36 @@ export const isPaperAccount = (id?: string) => !!id && /^D/i.test(id.trim());
 
 const cents = (n: number) => Math.round(n * 100) / 100;
 
+/** The price the max loss is measured from: the worst of the plan's entry, the limit and the trigger. */
+export const entryRef = (p: BracketPlan) => Math.max(p.entry, p.limit ?? 0, p.trigger ?? 0);
+export const maxLossOf = (p: BracketPlan) => cents(p.qty * (entryRef(p) - p.stop));
+
 export function ibkrBracket(p: BracketPlan, acctId: string, conid: number, cOID: string): IbkrOrder[] {
   if (!(p.qty > 0) || !Number.isInteger(p.qty)) throw new Error("whole shares only");
   if (!(p.stop > 0 && p.target > p.stop)) throw new Error("the stop must be below the target");
+  if (p.limit !== undefined && p.trigger !== undefined) throw new Error("a limit or a trigger entry, not both");
   if (p.limit !== undefined && !(p.limit > p.stop && p.limit < p.target)) throw new Error("the limit must sit between the stop and the target");
+  if (p.trigger !== undefined && !(p.trigger > p.stop && p.trigger < p.target)) throw new Error("the trigger must sit between the stop and the target");
   const base = { acctId, conid, quantity: p.qty, tif: "DAY" as const, outsideRTH: false as const };
-  return [
-    { ...base, cOID, side: "BUY", ...(p.limit !== undefined ? { orderType: "LMT" as const, price: cents(p.limit) } : { orderType: "MKT" as const }) },
-    { ...base, cOID: `${cOID}-tp`, parentId: cOID, side: "SELL", orderType: "LMT", price: cents(p.target) },
-    { ...base, cOID: `${cOID}-sl`, parentId: cOID, side: "SELL", orderType: "STP", price: cents(p.stop) },
+  const entry =
+    p.trigger !== undefined ? { orderType: "STP" as const, price: cents(p.trigger) } : p.limit !== undefined ? { orderType: "LMT" as const, price: cents(p.limit) } : { orderType: "MKT" as const };
+  const out: IbkrOrder[] = [
+    { ...base, cOID, side: "BUY", ...entry },
+    { ...base, parentId: cOID, side: "SELL", orderType: "LMT", price: cents(p.target) },
+    { ...base, parentId: cOID, side: "SELL", orderType: "STP", price: cents(p.stop) },
   ];
+  if (p.closeAtEnd) out.push({ ...base, parentId: cOID, side: "SELL", orderType: "MOC" });
+  return out;
 }
 
 /** The ticket in plain words, as trader-broker shows it. */
 export function ticketLines(p: BracketPlan, account: string, paper: boolean): string[] {
-  const risk = Math.max(p.entry, p.limit ?? 0) - p.stop;
+  const how = p.trigger !== undefined ? `when it trades at $${p.trigger.toFixed(2)} or higher (buy-stop, waits at IBKR)` : p.limit !== undefined ? `limit $${p.limit.toFixed(2)}` : "market";
   return [
     `${paper ? "PAPER" : "LIVE"} account ${account}, Interactive Brokers`,
-    `BUY ${p.qty} ${p.symbol}, ${p.limit !== undefined ? `limit $${p.limit.toFixed(2)}` : "market"}, good for today`,
-    `stop-loss $${p.stop.toFixed(2)} · take-profit $${p.target.toFixed(2)} (one cancels the other)`,
-    `max loss about $${cents(p.qty * risk).toFixed(2)} if the stop fills at $${p.stop.toFixed(2)}; in a fast market it can fill worse`,
+    `BUY ${p.qty} ${p.symbol}, ${how}, good for today`,
+    `stop-loss $${p.stop.toFixed(2)} · take-profit $${p.target.toFixed(2)} (one cancels the other)${p.closeAtEnd ? "; else sold at the close" : ""}`,
+    `max loss about $${maxLossOf(p).toFixed(2)} if the stop fills at $${p.stop.toFixed(2)}; in a fast market it can fill worse`,
   ];
 }
 
@@ -89,9 +105,29 @@ export function nyIso(ms: number): string {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${off < 0 ? "-" : "+"}${String(Math.abs(off)).padStart(2, "0")}:00`;
 }
 
-/** What the user must type to place it: the quantity and the symbol, e.g. "8 TSLA". */
-export const confirmPhrase = (p: { qty: number; symbol: string }) => `${p.qty} ${p.symbol.toUpperCase()}`;
-export const confirmMatches = (typed: string, p: { qty: number; symbol: string }) => typed.trim().replace(/\s+/g, " ").toUpperCase() === confirmPhrase(p);
+/**
+ * IBKR's fixed commission for US stocks, in and out: $0.005 a share, at least $1.00 and at most 1% of
+ * the trade, each way (what the live preview charged: $1.00 for 13 shares). An estimate: the
+ * preview shows the real figure.
+ */
+export function ibkrFeeEstimate(qty: number, price: number): number {
+  const side = Math.min(Math.max(1, 0.005 * qty), 0.01 * qty * price);
+  return cents(2 * side);
+}
+/** Fees may be at most this share of what the trade risks: 25% by default (the paper desk's rule), or the user's own "max_fee_pct" from Settings. */
+export const MAX_FEE_SHARE = 0.25;
+export function feeProblem(p: BracketPlan, maxShare = MAX_FEE_SHARE): string | undefined {
+  const fee = ibkrFeeEstimate(p.qty, entryRef(p));
+  const risk = maxLossOf(p);
+  return fee > risk * maxShare ? `${p.symbol}: about $${fee.toFixed(2)} in IBKR commissions (in and out) against $${risk.toFixed(2)} of risk; your limit is fees at most ${Math.round(maxShare * 100)}% of the risk (Settings → Risk → Max fees vs risk).` : undefined;
+}
+
+type QS = { qty: number; symbol: string };
+const one = (p: QS) => `${p.qty} ${p.symbol.toUpperCase()}`;
+/** What the user types to place them: "8 TSLA", or for a batch "8 TSLA, 5 F". */
+export const confirmPhrase = (p: QS | QS[]) => (Array.isArray(p) ? p : [p]).map(one).join(", ");
+const norm = (s: string) => s.trim().toUpperCase().replace(/\s*,\s*/g, ", ").replace(/\s+/g, " ");
+export const confirmMatches = (typed: string, p: QS | QS[]) => norm(typed ?? "") === confirmPhrase(p);
 
 /** IBKR writes money as text: "11.36 USD (1 Shares)", "1,234.50 USD". The first number is the amount. */
 export function ibkrMoney(v: unknown): number | undefined {

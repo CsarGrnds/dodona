@@ -81,8 +81,21 @@ Run everything from the repo root.
    ```
 
    No `POST /sso/Dispatcher` means the login didn't complete through the
-   gateway: ask them to retry on the localhost page and wait for the success
-   message (2FA not approved and a closed tab are the usual causes).
+   gateway. **Restart the gateway first, then ask once more:** a gateway left
+   running from a previous day (or through several failed logins) keeps stale
+   sessions, and the user's IBKR Mobile approval never reaches the new login.
+   Restarting it is what fixed this on 2026-11-17 and 2026-11-18.
+   1. Stop it: Ctrl-C in its Terminal tab (`stop_terminal_tab` on the
+      `IBKR gateway` tab you opened), or in the tab the user started it in.
+   2. Start it again in the same tab: `cd ~/clientportal.gw && bin/run.sh root/conf.yaml`,
+      and wait for `status` to say `LOGIN NEEDED` (it's up).
+   3. Ask the user to close any old localhost:5001 tab and old IBKR Mobile
+      notifications, open a fresh https://localhost:5001, sign in once (Live/Paper
+      switch matching the username), approve only the newest notification, and
+      wait for "Client login succeeds".
+   If it still fails after a restart, the usual causes are a different user
+   selected in IBKR Mobile, or the same username logged in elsewhere (TWS, the
+   app's trading screen, the website).
 
 4. **Sync.**
 

@@ -46,12 +46,45 @@ Day trading loses most people money; a good paper week is not proof.
 | `trade-analyst` | trader-analyst | Sonnet | Earnings trend (when SEC_USER_AGENT is set) |
 | `trade-budget` | trader-budget | Haiku | Shares inside the rules, one bracket order |
 | `trade-risk` | trader-risk | Haiku | PASS or BLOCK, the last word |
+| `trade-chartist` | Dodona's `npm run chart` | Sonnet | Reads the real charts as images: 1-5 chart score |
+| `trade-coach` | Dodona's `npm run desk -- review` | Opus | After the close: grades every call, writes the playbook |
 
 Each subagent runs on the cheapest model that does its job well (set in its `model:` frontmatter).
 Haiku runs a script and reports its numbers; the script does the math, and the booking check
 (trader-risk's fingerprint plus Dodona's own rules) is code, not a model's judgment. Sonnet reads
 news and earnings, where judgment matters. You, the lead, run on the session's model and make every
 call. If a Haiku report looks wrong or incomplete, re-run that one step yourself rather than trusting it.
+
+## Known quirks (save steps)
+
+- **The SEC contact** is `sec_user_agent` in `trader/config.json`; the news and analyst scripts read it
+  from there. Never probe environment variables (`$SEC_USER_AGENT`, `printenv`): background runs
+  block those commands.
+- **`news.py` exits with code 1 when there's nothing new.** That's its normal "no new headlines", not
+  a failure: read its output.
+- **`exit.py --stop`** takes `or-mid`, `or-low`, `price:X`, `pct:X` or `atr:K` (with the hyphen).
+- **One command per Bash call** in background runs: no `for` loops, no `$VAR`, no `&&` chains of skill
+  scripts. Each extra part needs an approval that nobody can give.
+
+## How the team gets better every day
+
+- **The playbook.** Before anything else in every run, read `trader/playbook.md` (repo root) if it
+  exists. The coach writes it from the replays of every past candidate. Follow it: its lessons only
+  make you pickier (skip a setup, a time, a chart pattern, a market mode). It never overrides the
+  user's risk limits, sizes or the paper/live switch.
+- **The market first.** Draw SPY once per run: `npm run -s chart -- SPY`. From its `facts` (above or
+  below VWAP and the 20/50-day averages, today vs yesterday's range) pick the day's mode:
+  **aggressive** (SPY above VWAP and both averages), **defensive** (below VWAP and the 20-day average:
+  take only 4-5 charts, at most 1 trade), else **normal**. Log it, and pass it with every candidate.
+- **The chartist.** After `trade-exit` writes a plan, send the candidate to `trade-chartist` with the
+  trigger, stop and target. A chart score of 1-2 is a skip; 3 only with everything else strong.
+  If the chartist fails, go on without it and say so.
+- **Log every call, taken or skipped**, right after you decide, so the coach can replay it:
+  ```bash
+  npm run desk -- candidate --symbol X --setup orb --trigger P --stop S --target T \
+    --verdict take|skip --why "<the reasons, with the numbers>" --chart-score N --market <mode> [--mode live]
+  ```
+  Skips teach as much as trades. Log candidates that had a plan (trigger, stop, target).
 
 ## One cycle
 
@@ -82,12 +115,14 @@ All commands from the repo root. Every `npm run desk` command prints JSON.
 5. **Work the best candidates, one at a time, at most 3 per cycle.** For each:
    1. `trade-entry` → only TRIGGERED goes on.
    2. `trade-exit` → the plan. Stop on a refusal.
-   3. `trade-timemachine` with the flat-by time → odds, average R, history, verdict.
-   4. `trade-analyst` only if the news flags earnings within 5 trading days or you're considering
+   3. `trade-chartist` with the plan → chart score 1-5 and what it saw.
+   4. `trade-timemachine` with the flat-by time → odds, average R, history, verdict.
+   5. `trade-analyst` only if the news flags earnings within 5 trading days or you're considering
       a hold past today.
-   5. **Your call**, in the log, with the evidence: chart trigger quality, news, the Time Machine's
-      average R and history, the market. Skip coin flips and negative averages; skipping is a good trade.
-   6. To take it: `trade-budget` → `trade-risk`. Only on PASS:
+   6. **Your call**, in the log, with the evidence: the chart score, news, the Time Machine's average R
+      and history, the market mode, the playbook. Skip coin flips and negative averages; skipping is a
+      good trade. Log the candidate (`npm run desk -- candidate …`), taken or skipped.
+   7. To take it: `trade-budget` → `trade-risk`. Only on PASS:
       ```bash
       npm run desk -- book --style day --setup "<setup>" --thesis "<1-2 sentences: why, with the numbers>"
       ```
@@ -106,6 +141,76 @@ All commands from the repo root. Every `npm run desk` command prints JSON.
    npm run desk -- session end --summary "<summary>"
    ```
    If something broke, end with `--status error` and say what.
+
+## LIVE MORNING mode (`/trade-desk live`): the real-account batch
+
+When the user asks for the live morning run (`/trade-desk live`, "prepare today's real orders"),
+you prepare the day's REAL trades for the user to approve once. You still never place, approve or
+send an order: the user does that by hand in Dodona's IBKR panel, and the orders then wait at IBKR
+as buy-stops (each buys only if its breakout triggers, with its stop, target and a sell at the close).
+
+- Run it any time between 9:46 AM and 3:00 PM New York (right after the opening range forms is best:
+  most breakouts come early). Outside that window, say so and stop.
+- Skills run from the **repo root** (the real portfolio and rules). Tell every subagent, in its
+  prompt: **"LIVE MORNING: run from the repo root."** Never edit `trader/config.json`, and never
+  touch `"paper"`.
+- Skip any stock the user already holds (`trader/portfolio.json`): Dodona refuses them, so a day
+  trade's sell can never touch shares they keep.
+- Never stage more than the budget allows: the batch's total cost (shares x trigger, plus anything
+  placed at IBKR earlier today) must fit in the budget minus the cash buffer (with $200 and 20%: $160).
+  Dodona refuses a batch over it, so stage the best trade first and stop when the next one won't fit.
+- Skip trades too small to pay for themselves: IBKR charges at least $1.00 each way (fixed pricing),
+  and Dodona refuses a trade whose fees (about $2 in and out) are over the user's "max_fee_pct" of its
+  max loss (Settings → Risk → Max fees vs risk; 25% if unset). Read it from `trader/config.json`, and
+  say in your summary when fees are what stopped a trade.
+
+0. **The IBKR gateway must be logged in first**, so the user can approve the batch within 15
+   minutes of the risk check: `npm run -s ibkr -- status`. Not `READY`? Follow `/ibkr-gateway` (it
+   restarts a stale gateway when a login doesn't take) and wait for the user before going on.
+   Best done before 9:30 AM New York, while the opening range forms.
+1. `npm run desk -- session start --trigger "LIVE MORNING: today's real-account batch"`, then
+   `npm run desk -- stage clear`.
+2. Find ranges that have formed but NOT broken yet (the scanner skill only lists breakouts that
+   already happened, too late for an order that waits at IBKR):
+   ```bash
+   npm run -s desk -- pending
+   ```
+   It checks the whole market in seconds and returns the best few (`pending`): each with its range
+   high (`orHigh`, the trigger), range low, VWAP, relative volume and how far it is under the trigger.
+   Stocks the user holds and blocked tickers are already left out. Then `trade-news` on them; drop
+   AVOIDs. Log both.
+3. For the best candidates, one at a time, at most the trades left today (`max_trades_per_day`):
+   1. (No `trade-entry` here: `pending` already confirmed the range is formed and unbroken.)
+   2. `trade-exit` with a plan-ahead entry at the range high: `exit.py plan --symbol <SYM> --entry
+      <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb --stop or-low --time "<the start of the last completed
+      5-minute bar, e.g. 1:45 PM>" --write --json`. The stop goes at the range LOW (`--stop or-low`):
+      it sits below the range instead of inside its noise, and it risks enough per trade for a small
+      account to pay its fees. The `--time` matters: without an entry time the Time
+      Machine refuses a plan that waits at a trigger, so it replays from that bar on.
+   3. `trade-chartist` on that plan (chart score 1-2 → skip), then `trade-timemachine`. Your call,
+      logged with the numbers (`npm run desk -- candidate … --mode live`, taken or skipped); skip coin
+      flips and negative averages.
+   4. `trade-budget` (sizes at the trigger), then stage it:
+      `npm run desk -- stage add --thesis "<1-2 sentences with the numbers>"`.
+4. `npm run desk -- stage done` (writes the batch to `trader/orders.json`), then `trade-risk` on the
+   whole batch: it adds the losses together against the daily limit.
+   - Every order must PASS. For a BLOCK: `npm run desk -- stage drop --symbol X`, `stage done`
+     again, and `trade-risk` again.
+5. Log the result and end the session. Say how many orders are ready, their total max loss, and
+   that the user approves them in Dodona (Desk → IBKR orders) within 15 minutes of the risk
+   check. If PushNotification is available, notify the user with the same one line.
+
+Never run this from `/loop`. Dodona's own timer may start it at the user's "Batch times" (Settings → Broker → Prepare the batch by itself): it still only stages and checks, and it ends with the user approving the batch on the Desk.
+
+## REVIEW mode (`/trade-desk review`): the coach, after the close
+
+Once a day after 4:05 PM New York (Dodona starts it by itself at 4:10 PM while it's running):
+
+1. `npm run desk -- session start --trigger "REVIEW: today's calls and the playbook"`
+2. Call `trade-coach`. It replays every candidate logged today on the real bars, grades the calls
+   and updates `trader/playbook.md`.
+3. Log its verdict and the lessons it added or changed, then end the session with a 2-3 sentence
+   summary. No candidates today: log that and end.
 
 ## Running it all day
 

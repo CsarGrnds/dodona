@@ -10,7 +10,13 @@
 //   npm run desk -- log --agent scanner --title "…" [--text "…"]   add a step to it
 //   npm run desk -- session end --summary "…" [--status done|error]
 //   npm run desk -- driver team|auto             who makes entries: the team, or Dodona's own desk
-import { rename, readFile } from "node:fs/promises";
+//   npm run desk -- stage add [--trigger P] | list | drop | done | clear   REAL account: stage the morning batch
+//   npm run desk -- candidate --symbol X --trigger P --stop S --target T --verdict take|skip --why "…" [--setup orb --mode live --chart-score 4 --market normal]
+//   npm run desk -- review [--date YYYY-MM-DD]     replay the day's candidates on real bars and grade the calls
+import { appendFile, mkdir, readdir, rename, readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { learningStats, replay, type Candidate, type Replay } from "../lib/learning";
+import { scanPending } from "../lib/data/pending";
 import { marketStatus, nextBell } from "../lib/clock";
 import {
   buyFill,
@@ -30,7 +36,7 @@ import {
   type DeskState,
   type Style,
 } from "../lib/desk";
-import { getQuote } from "../lib/data";
+import { getIntraday, getQuote } from "../lib/data";
 import { loadOrCreateDesk, readDeskRules, withDeskLock, writeDesk } from "../lib/data/desk";
 import { runDesk } from "../lib/data/deskRun";
 import { acceptTeamOrder, paperFile, paperRoot, writePaperWorkspace } from "../lib/data/paper";
@@ -189,6 +195,107 @@ async function main() {
         const kind = (flag("kind") ?? "text") as "text" | "decision" | "error";
         sess!.steps.push({ at, kind: ["text", "decision", "error"].includes(kind) ? kind : "text", agent: flag("agent") ?? "lead", title: flag("title") ?? "Note", detail: flag("text") });
         result = { ok: true, steps: sess!.steps.length };
+        break;
+      }
+
+      case "pending": {
+        // Opening ranges formed but NOT broken yet, market-wide: the candidates for buy-stop orders.
+        const real = (p: string) => resolve(process.cwd(), "trader", p);
+        const pf = JSON.parse(await readFile(real("portfolio.json"), "utf8").catch(() => "null"));
+        const held = ((pf?.positions ?? []) as Array<{ ticker?: string }>).map((p) => String(p.ticker ?? "").toUpperCase()).filter(Boolean);
+        const maxPrice = Number(flag("max-price")) || Math.min((rules.budget * (1 - rules.cash_buffer_pct / 100)), (rules.budget * rules.max_position_pct) / 100, rules.max_order_usd);
+        const scan = await scanPending({ maxPrice, exclude: [...held, ...rules.blocked], limit: Number(flag("limit")) || 8, confirm: Number(flag("confirm")) || 150, ...(flag("min-range") ? { minRangePct: Number(flag("min-range")) } : {}) });
+        result = { ...scan, maxPrice, excludedHeld: held.length, next: "for the best ones: trade-chartist, then trade-exit with --entry <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb, Time Machine, budget, stage add" };
+        break;
+      }
+
+      case "candidate": {
+        // Every candidate the team looks at, taken or skipped, for the daily review (trader/learning/).
+        const n = (k: string) => Number(flag(k));
+        const c: Candidate = {
+          at,
+          date: today,
+          mode: flag("mode") === "live" ? "live" : "paper",
+          symbol: (flag("symbol") ?? "").toUpperCase(),
+          setup: flag("setup") ?? "orb",
+          trigger: n("trigger"),
+          stop: n("stop"),
+          target: n("target"),
+          verdict: flag("verdict") === "take" ? "take" : "skip",
+          why: flag("why") ?? "",
+          ...(flag("chart-score") ? { chartScore: n("chart-score") } : {}),
+          ...(flag("market") ? { marketMode: flag("market") } : {}),
+        };
+        if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(c.symbol)) fail("--symbol is required");
+        if (!(c.trigger > c.stop && c.target > c.trigger)) fail("--trigger, --stop and --target are required (stop < trigger < target)");
+        if (!flag("verdict")) fail("--verdict take|skip is required");
+        const dir = resolve(process.cwd(), "trader", "learning");
+        await mkdir(dir, { recursive: true });
+        await appendFile(join(dir, "candidates.jsonl"), JSON.stringify(c) + "\n");
+        result = { ok: true, logged: c };
+        break;
+      }
+
+      case "review": {
+        // Replay every candidate of a day on its real 5-minute bars, grade the calls, add up what works.
+        const date = flag("date") ?? today;
+        const dir = resolve(process.cwd(), "trader", "learning");
+        const all = (await readFile(join(dir, "candidates.jsonl"), "utf8").catch(() => ""))
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l) as Candidate);
+        const day = all.filter((c) => c.date === date);
+        const replays: Replay[] = [];
+        for (const c of day) replays.push(replay(c, await getIntraday(c.symbol).catch(() => []), minuteOf(rules.flat_by)));
+        await mkdir(join(dir, "reviews"), { recursive: true });
+        if (day.length) await writeFile(join(dir, "reviews", `${date}.json`), JSON.stringify({ date, reviewed_at: at, replays }, null, 2) + "\n");
+        const history: Replay[] = [];
+        for (const f of (await readdir(join(dir, "reviews")).catch(() => [] as string[])).filter((f) => f.endsWith(".json"))) history.push(...(JSON.parse(await readFile(join(dir, "reviews", f), "utf8")).replays ?? []));
+        result = { date, candidates: day.length, replays: replays.map((r) => ({ symbol: r.symbol, mode: r.mode, verdict: r.verdict, outcome: r.outcome, R: r.R, triggeredAt: r.triggeredAt, exitAt: r.exitAt, rightCall: r.rightCall, chartScore: r.chartScore, why: r.why })), today: learningStats(replays), allTime: learningStats(history), playbook: "trader/playbook.md" };
+        break;
+      }
+
+      case "stage": {
+        // The real-account morning batch (repo root trader/, NOT the paper workspace): collect each
+        // candidate's trader-budget order as a buy-stop at its plan's entry, then hand trader-risk one
+        // batch. Nothing here talks to a broker: you approve and place the batch in Dodona's IBKR panel.
+        const real = (p: string) => resolve(process.cwd(), "trader", p);
+        const readJson = async (p: string) => JSON.parse(await readFile(p, "utf8").catch(() => "null"));
+        const staged: Array<Record<string, unknown>> = (await readJson(real("staged.json")))?.orders ?? [];
+        const save = (orders: unknown[]) => writeFile(real("staged.json"), JSON.stringify({ orders, updated_at: at }, null, 2) + "\n");
+        const brief = (o: Record<string, unknown>) => ({ symbol: o.symbol, qty: o.qty, trigger: o.stop_price, stop: o.stop_loss_stop_price, target: o.take_profit_limit_price, max_loss: (o.plan as Record<string, unknown>)?.max_loss });
+        if (sub === "add") {
+          const doc = await readJson(real("orders.json"));
+          const orders = (doc?.orders ?? []) as Array<Record<string, unknown>>;
+          if (orders.length !== 1) fail(`trader/orders.json has ${orders.length} orders; run /trader-budget --write for one candidate first`);
+          const o = { ...orders[0] };
+          const plan = (o.plan ?? {}) as Record<string, unknown>;
+          if (String(o.side).toLowerCase() !== "buy" || o.order_class !== "bracket") fail("only a buy bracket (stop-loss and take-profit) can be staged");
+          const trigger = Number(flag("trigger") ?? plan.entry);
+          if (!(trigger > Number(o.stop_loss_stop_price) && trigger < Number(o.take_profit_limit_price))) fail("the trigger must sit between the stop and the target");
+          const sym = String(o.symbol).toUpperCase();
+          if (staged.some((x) => String(x.symbol).toUpperCase() === sym)) fail(`${sym} is already staged`);
+          Object.assign(o, { type: "stop", stop_price: trigger.toFixed(2), time_in_force: "day" });
+          o.plan = { ...plan, entry: trigger, style: flag("style") ?? plan.style ?? "day", thesis: flag("thesis") ?? plan.thesis };
+          staged.push(o);
+          await save(staged);
+          result = { ok: true, staged: staged.map(brief), next: "stage the next candidate, or `npm run desk -- stage done` and then /trader-risk" };
+        } else if (sub === "list") {
+          result = { staged: staged.map(brief) };
+        } else if (sub === "done") {
+          if (!staged.length) fail("nothing staged");
+          await writeFile(real("orders.json"), JSON.stringify({ created_by: "dodona stage", created_at: at, status: "proposed", orders: staged }, null, 2) + "\n");
+          result = { ok: true, batch: staged.map(brief), next: "run /trader-risk (check.py --json) on trader/orders.json; then the user approves the batch in Dodona's IBKR panel" };
+        } else if (sub === "drop") {
+          const sym = (flag("symbol") ?? "").toUpperCase();
+          const left = staged.filter((x) => String(x.symbol).toUpperCase() !== sym);
+          if (left.length === staged.length) fail(`${sym} isn't staged`);
+          await save(left);
+          result = { ok: true, staged: left.map(brief), next: "`npm run desk -- stage done` again, then /trader-risk again" };
+        } else if (sub === "clear") {
+          await save([]);
+          result = { ok: true, staged: [] };
+        } else fail("stage add|list|drop|done|clear");
         break;
       }
 
