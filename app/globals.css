@@ -389,3 +389,5 @@ ul.news li { margin-bottom: 4px; }
 .ib-activity { display: grid; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .btn.danger { background: var(--sell); border-color: var(--sell); color: #fff; font-weight: 600; }
 .ib-batch { display: grid; gap: 8px; margin: 6px 0 10px; }
+.tr-status { display: grid; gap: 4px; max-width: 320px; text-align: right; justify-items: end; }
+.tr-last { font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }

@@ -44,6 +44,7 @@ Portfolio:                       /api/portfolio (trader/portfolio.json) · /api/
 Status:                          /api/status (live check of every connector)
 Desk:                            /api/desk · /api/desk/run · /api/desk/reset · /api/desk/live · /api/desk/team (the paper desk, Claude's live session, the trade team's session)
 IBKR orders:                     /api/ibkr/orders (GET the ticket, its gates and today's IBKR activity; POST preview, or place/answer from a click in Dodona only)
+Team run:                        /api/desk/prepare (GET the background team run's status; POST start/stop from a click in Dodona)
 Settings:                        /api/settings (GET the trading rules, team models and driver; POST to save, localhost only)
 Claude Code sessions:            /api/claude/sessions · /api/claude/sessions/<id> (this project's Claude Code sessions on this computer, localhost only)
 Today:                           /api/today (holdings + open IBKR orders + watchlist → stops, discounts, buy limits)
@@ -266,9 +267,11 @@ Values are checked as you type, across fields too (a day's loss limit can't be u
 
 Real trades work like this: **the team prepares, you approve once, IBKR waits for the breakout.**
 
-1. **9:50–10:30 AM New York, in Claude Code: `/trade-desk live`.** The team runs from the repo root against your real portfolio and rules. Scanner and News pick candidates whose opening range hasn't broken yet. Entry, Exit plan and Time Machine plan each one ahead, with the range high as the trigger. Budget sizes it, and `npm run desk -- stage add` stages it as a **buy-stop**. Then `stage done` writes the batch to `trader/orders.json`, and trader-risk checks it all together against your daily loss limit.
+1. **9:50–10:30 AM New York: click Run desk now on the Desk** (it reads "prepare IBKR batch" when real orders are on, and stays greyed out outside that window), or type `/trade-desk live` in Claude Code. The team runs from the repo root against your real portfolio and rules. Scanner and News pick candidates whose opening range hasn't broken yet. Entry, Exit plan and Time Machine plan each one ahead, with the range high as the trigger. Budget sizes it, and `npm run desk -- stage add` stages it as a **buy-stop**. Then `stage done` writes the batch to `trader/orders.json`, and trader-risk checks it all together against your daily loss limit.
 2. **You approve it once**, on the Desk's **IBKR orders** panel. It shows every ticket, their total risk, and IBKR's preview of each (cost, commission, warnings; it places nothing). You type the batch (`8 TSLA, 5 F`) and click **Place**.
 3. **IBKR does the waiting.** Each order sits at IBKR and buys only if its price trades at the trigger, with no delay. Its stop-loss and take-profit are attached, and a sell at the close (MOC) keeps day trades from staying open overnight. Untriggered orders end at the close, and **Cancel unfilled** drops them sooner; filled positions keep their stop and target.
+
+The button starts the team as a background Claude Code session (`claude -p "/trade-desk live"`, `lib/data/liveRun.ts`, `POST /api/desk/prepare`). The session uses your Claude plan, shows live in "Claude's session", and its latest step and final answer show under the button, with a Stop button. It may only run the desk and gateway-status `npm` commands, the skill scripts, and read files and start subagents. Editing files, the web, `curl` and `git` are blocked, and it can't place, change or cancel an order. When the team drives the desk and real orders are off, the same button runs one paper cycle (`/trade-desk`) instead. "Manage paper positions every 5 min" only runs the paper desk's stops, targets and close.
 
 Every gate, every time:
 

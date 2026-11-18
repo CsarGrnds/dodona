@@ -93,3 +93,19 @@ test("ibkr: fees may be at most a quarter of the risk (IBKR's $1 minimum, seen l
   assert.match(feeProblem({ symbol: "F", qty: 13, entry: 11.5, trigger: 11.5, stop: 11.2, target: 12.1 }) ?? "", /\$2\.00 in IBKR commissions .* \$3\.90 of risk/);
   assert.equal(feeProblem(PLAN), undefined); // 8 TSLA: $2 against $46.88
 });
+
+test("team run: the background session's log reads as steps and an answer", async () => {
+  const { summarize } = await import("../lib/data/liveRun");
+  const log = [
+    JSON.stringify({ type: "system", subtype: "init" }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "npm run -s ibkr -- status" } }] } }),
+    JSON.stringify({ type: "assistant", parent_tool_use_id: "x", message: { content: [{ type: "text", text: "a subagent's own words" }] } }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Agent", input: { subagent_type: "trade-scanner", description: "ORB scan" } }, { type: "text", text: "Scanning.\nmore" }] } }),
+    JSON.stringify({ type: "result", result: "2 orders ready", total_cost_usd: 0.31, is_error: false }),
+  ].join("\n");
+  const r = summarize(log);
+  assert.deepEqual(r.lines, ["$ npm run -s ibkr -- status", "→ trade-scanner: ORB scan", "Scanning."]);
+  assert.equal(r.result, "2 orders ready");
+  assert.equal(r.costUsd, 0.31);
+  assert.equal(r.error, undefined);
+});
