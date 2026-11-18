@@ -60,7 +60,7 @@ export interface PendingScan {
   rejected: Record<string, number>; // why, how many (stage 2)
 }
 
-export async function scanPending(opts: { maxPrice: number; minPrice?: number; minDollarVolume?: number; confirm?: number; limit?: number; exclude?: string[]; nowMs?: number }): Promise<PendingScan> {
+export async function scanPending(opts: { minRangePct?: number; maxPrice: number; minPrice?: number; minDollarVolume?: number; confirm?: number; limit?: number; exclude?: string[]; nowMs?: number }): Promise<PendingScan> {
   const nowMs = opts.nowMs ?? Date.now();
   const text = await readFile(resolve(process.cwd(), "trader", "universe.txt"), "utf8").catch(() => "");
   const universe = text.split("\n").map((l) => l.split("|")[0].trim().toUpperCase()).filter((s) => /^[A-Z][A-Z0-9.]{0,6}$/.test(s));
@@ -85,7 +85,7 @@ export async function scanPending(opts: { maxPrice: number; minPrice?: number; m
     .sort((a, b) => (b[1].volume ?? 0) * (b[1].price ?? 0) - (a[1].volume ?? 0) * (a[1].price ?? 0))
     .map(([sym]) => sym);
   const toConfirm = stage1.slice(0, opts.confirm ?? 60);
-  const checked = await pool(toConfirm, 6, async (sym) => pendingRange(sym, await getIntraday(sym).catch(() => []), { nowMs }));
+  const checked = await pool(toConfirm, 6, async (sym) => pendingRange(sym, await getIntraday(sym).catch(() => []), { nowMs, minRangePct: opts.minRangePct }));
   const rejected: Record<string, number> = {};
   for (const c of checked) if (!isPending(c)) rejected[c.why.replace(/[\d.]+%/, "x%")] = (rejected[c.why.replace(/[\d.]+%/, "x%")] ?? 0) + 1;
   return { at: new Date(nowMs).toISOString(), universe: universe.length, stage1: stage1.length, confirmed: toConfirm.length, pending: rankPending(checked.filter(isPending)).slice(0, opts.limit ?? 8), rejected };

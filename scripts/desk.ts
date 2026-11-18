@@ -204,7 +204,7 @@ async function main() {
         const pf = JSON.parse(await readFile(real("portfolio.json"), "utf8").catch(() => "null"));
         const held = ((pf?.positions ?? []) as Array<{ ticker?: string }>).map((p) => String(p.ticker ?? "").toUpperCase()).filter(Boolean);
         const maxPrice = Number(flag("max-price")) || Math.min((rules.budget * (1 - rules.cash_buffer_pct / 100)), (rules.budget * rules.max_position_pct) / 100, rules.max_order_usd);
-        const scan = await scanPending({ maxPrice, exclude: [...held, ...rules.blocked], limit: Number(flag("limit")) || 8 });
+        const scan = await scanPending({ maxPrice, exclude: [...held, ...rules.blocked], limit: Number(flag("limit")) || 8, confirm: Number(flag("confirm")) || 150, ...(flag("min-range") ? { minRangePct: Number(flag("min-range")) } : {}) });
         result = { ...scan, maxPrice, excludedHeld: held.length, next: "for the best ones: trade-chartist, then trade-exit with --entry <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb, Time Machine, budget, stage add" };
         break;
       }

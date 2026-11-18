@@ -28,11 +28,17 @@ export interface PendingOpts {
   nowMs: number;
   orBars?: number; // 3 x 5 minutes = 15
   maxBelowPct?: number; // default 1.5%
-  minRangePct?: number; // too narrow a range: the stop sits in the noise (default 0.4%)
+  minRangePct?: number; // too narrow a range can't pay for its fees: the risk per share is tiny (default 1.5%)
   maxRangePct?: number; // too wide: the risk per share is too big (default 6%)
 }
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
+
+/**
+ * Ranges narrower than this are skipped: with a small account (about $150 a trade) a 1% range risks
+ * about $1.50 at its low, which IBKR's fees eat. 1.5% leaves room for the trade to pay for itself.
+ */
+export const MIN_RANGE_PCT = 1.5;
 
 /** Check one stock's 5-minute bars (several sessions, oldest first). Returns the range or why not. */
 export function pendingRange(symbol: string, bars: IntradayBar[], o: PendingOpts): PendingRange | { symbol: string; why: string } {
@@ -63,7 +69,7 @@ export function pendingRange(symbol: string, bars: IntradayBar[], o: PendingOpts
   if (belowHighPct > (o.maxBelowPct ?? 1.5)) return { symbol, why: `${r2(belowHighPct)}% under the range high` };
   if (last < vwap) return { symbol, why: "below VWAP" };
   if (last < orMid) return { symbol, why: "in the lower half of the range" };
-  if (rangePct < (o.minRangePct ?? 0.4)) return { symbol, why: "range too narrow" };
+  if (rangePct < (o.minRangePct ?? MIN_RANGE_PCT)) return { symbol, why: "range too narrow" };
   if (rangePct > (o.maxRangePct ?? 6)) return { symbol, why: "range too wide" };
   const past = new Map<string, number>();
   for (const b of regular) {

@@ -182,8 +182,10 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
 3. For the best candidates, one at a time, at most the trades left today (`max_trades_per_day`):
    1. (No `trade-entry` here: `pending` already confirmed the range is formed and unbroken.)
    2. `trade-exit` with a plan-ahead entry at the range high: `exit.py plan --symbol <SYM> --entry
-      <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb --time "<the start of the last completed
-      5-minute bar, e.g. 1:45 PM>" --write --json`. The `--time` matters: without an entry time the Time
+      <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb --stop or-low --time "<the start of the last completed
+      5-minute bar, e.g. 1:45 PM>" --write --json`. The stop goes at the range LOW (`--stop or-low`):
+      it sits below the range instead of inside its noise, and it risks enough per trade for a small
+      account to pay its fees. The `--time` matters: without an entry time the Time
       Machine refuses a plan that waits at a trigger, so it replays from that bar on.
    3. `trade-chartist` on that plan (chart score 1-2 → skip), then `trade-timemachine`. Your call,
       logged with the numbers (`npm run desk -- candidate … --mode live`, taken or skipped); skip coin
