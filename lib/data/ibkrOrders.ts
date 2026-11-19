@@ -122,6 +122,7 @@ export interface IbkrTicket {
   dailyLimit?: number;
   batchCost: number; // what the batch puts into trades if every order fills
   spendable?: number; // the budget minus the cash buffer
+  maxFeePct: number; // round-trip fees may be at most this % of a trade's risk (Settings, default 25)
   confirm?: string; // what to type to place them
   account?: string;
   accountIsPaper?: boolean;
@@ -198,6 +199,7 @@ export async function ibkrTicket(nowMs = Date.now()): Promise<IbkrTicket> {
     ready: problems.length === 0 && items.length > 0,
     problems,
     items,
+    maxFeePct: Number(cfg.max_fee_pct) > 0 ? Number(cfg.max_fee_pct) : 25,
     totalMaxLoss,
     dailyLimit,
     batchCost,

@@ -114,7 +114,7 @@ export function IbkrOrderPanel() {
               [t.paperOnly ? "A paper account (DU…), since Paper trading is on" : "Paper trading is OFF: these are REAL orders", t.account ? (t.paperOnly ? !!t.accountIsPaper : true) : false],
               ["trader-risk passed these exact orders in the last 15 minutes", t.items.length > 0 && !t.problems.some((p) => /trader-risk|orders\.json|risk check|order than|twice|only buys|bracket order|supported/i.test(p))],
               ["None of them is a stock you already hold", t.items.length > 0 && !t.problems.some((p) => /already hold/.test(p))],
-              ["Fees are at most 25% of each trade's risk", t.items.length > 0 && !t.problems.some((p) => /commissions/.test(p))],
+              [`Fees are at most ${t.maxFeePct ?? 25}% of each trade's risk`, t.items.length > 0 && !t.problems.some((p) => /commissions/.test(p))],
               ["Together they fit your daily loss limit", t.items.length > 0 && !t.problems.some((p) => /daily limit/.test(p))],
               ["Together they fit your budget (after the cash buffer)", t.items.length > 0 && !t.problems.some((p) => /your budget allows/.test(p))],
               ["The market is open", !t.problems.some((p) => /market is closed/.test(p))],

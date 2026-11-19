@@ -3,6 +3,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentSessionView, AgentToolbox } from "@/components/AgentSessionView";
 import { IbkrOrderPanel } from "@/components/IbkrOrderPanel";
+import { TeamAnalysis } from "@/components/TeamAnalysis";
+import { TradingFloor } from "@/components/TradingFloor";
 import { NextRunCountdown, TeamRunStatus, startTeamRun } from "@/components/TeamRun";
 import { ClaudeSessionView, TEAM_MODEL, TeamSessionView, type ClaudeSessionInfo } from "@/components/TeamSessionView";
 import { DailyPnlChart, EquityChart, PnlCalendar, RDistribution, signedUsd } from "@/components/DeskCharts";
@@ -14,6 +16,15 @@ import type { RunReport } from "@/lib/data/deskRun";
 import { getWatchlist } from "@/lib/store";
 
 const AUTO_KEY = "dodona.desk.auto.v1";
+const TAB_KEY = "dodona.desk.tab.v1";
+type Tab = "today" | "session" | "positions" | "performance" | "journal";
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: "today", label: "Today · analysis & tickets" },
+  { id: "session", label: "Team floor" },
+  { id: "positions", label: "Positions" },
+  { id: "performance", label: "Performance" },
+  { id: "journal", label: "Journal & rules" },
+];
 const AUTO_MS = 5 * 60_000;
 const KIND: Record<JournalKind, { icon: string; cls: string; label: string }> = {
   buy: { icon: "▲", cls: "ok", label: "Buy" },
@@ -47,6 +58,23 @@ export default function DeskPage() {
   const [auto, setAuto] = useState(false);
   const [chart, setChart] = useState<"equity" | "daily">("equity");
   const [feed, setFeed] = useState<"all" | "trades" | "claude">("all");
+  const [tab, setTab] = useState<Tab>("today");
+  useEffect(() => {
+    try {
+      const t = localStorage.getItem(TAB_KEY) as Tab | null;
+      if (t && TABS.some((x) => x.id === t)) setTab(t);
+    } catch {
+      /* private window */
+    }
+  }, []);
+  const pickTab = (t: Tab) => {
+    setTab(t);
+    try {
+      localStorage.setItem(TAB_KEY, t);
+    } catch {
+      /* private window */
+    }
+  };
   const [, tick] = useState(0);
   const runningRef = useRef(false);
   const [live, setLive] = useState<AgentSession>();
@@ -219,7 +247,7 @@ export default function DeskPage() {
           <div className="row" style={{ gap: 8 }}>
             <span className="pill act" title="This panel, the charts and the history are Dodona's practice ledger: paper money, real prices.">PAPER desk</span>
             {d.realOrders?.on && (
-              <a href="#ibkr-orders" className={`pill ${d.realOrders.live ? "bad" : "ok"}`} title="Real orders go to Interactive Brokers from the IBKR orders panel below, only when you approve them.">
+              <a href="#ibkr-orders" onClick={() => pickTab("today")} className={`pill ${d.realOrders.live ? "bad" : "ok"}`} title="Real orders go to Interactive Brokers from the IBKR orders panel below, only when you approve them.">
                 {d.realOrders.live ? "LIVE orders · IBKR" : "IBKR paper orders"}
               </a>
             )}
@@ -301,173 +329,275 @@ export default function DeskPage() {
       )}
       {err && <div className="err" style={{ marginTop: 12 }}>{err}</div>}
 
-      {/* ---- Claude's session: what it is doing behind the scenes */}
-      <section className="panel" style={{ marginTop: 14 }}>
-        <div className="row" style={{ marginBottom: 10 }}>
-          <h2 style={{ margin: 0 }}>✦ Claude&apos;s session</h2>
-          <span className="spacer" />
-          <label className="small muted" style={{ display: "inline-flex", gap: 6, alignItems: "center", marginRight: 8 }} title="Show any Claude Code session of this project on this computer (this one included), not only the trade team's">
-            <input type="checkbox" checked={allCc} onChange={() => setAllCc(!allCc)} /> All Claude Code sessions
-          </label>
-          {allCc && ccList && ccList.length > 0 && (
-            <select className="as-pick" value={ccShown?.id} onChange={(e) => setCcPick(e.target.value)}>
-              {ccList.map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.live ? "● " : ""}
-                  {new Date(x.updatedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · {x.title.slice(0, 50)}
-                  {x.subagents ? ` · ${x.subagents} subagents` : ""}
-                </option>
-              ))}
-            </select>
-          )}
-          {!allCc && saved.length > 1 && !(running && live) && (
-            <select className="as-pick" value={shown?.id} onChange={(e) => setPick(e.target.value)}>
-              {saved.map((x) => (
-                <option key={x.id} value={x.id}>
-                  {new Date(x.startedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · {x.model === TEAM_MODEL ? "trade team" : `${x.toolCalls} tools`} · {x.status}
-                </option>
-              ))}
-            </select>
-          )}
+      <nav className="dk-tabs" aria-label="Desk sections">
+        {TABS.map((x) => (
+          <button key={x.id} className={tab === x.id ? "on" : ""} onClick={() => pickTab(x.id)}>
+            {x.label}
+            {x.id === "positions" && d.positions.length > 0 && <span className="n">{d.positions.length}</span>}
+          </button>
+        ))}
+      </nav>
+
+      {tab === "today" && (
+        <div className="dk-tab">
+          {/* ---- the real-account order tickets (IBKR), off until turned on in Settings */}
+          <IbkrOrderPanel />
+          {/* ---- every stock the team analyzed: its chart, the chartist's read, the verdict, its ticket */}
+          <section className="panel">
+            <div className="row" style={{ marginBottom: 4 }}>
+              <h2 style={{ margin: 0 }}>✦ Team analysis</h2>
+            </div>
+            <div className="small muted" style={{ marginBottom: 12 }}>
+              One card per stock the trade team looked at, grouped by run: the levels, the chart the chartist read (◫ Chart), the verdict and why, the ticket it became, and after the close the coach&apos;s replay on the real bars.
+            </div>
+            <TeamAnalysis tick={teamTick} />
+          </section>
         </div>
-        {allCc ? (
-          ccErr ? (
-            <div className="err">{ccErr}</div>
-          ) : !ccList ? (
-            <div className="muted small"><Spinner /> Reading Claude Code sessions…</div>
-          ) : !ccShown ? (
-            <div className="dk-empty">No Claude Code sessions for this project on this computer yet.</div>
-          ) : (
-            <>
-              <div className="small muted" style={{ marginBottom: 8 }}>
-                Read from this computer&apos;s Claude Code transcripts. Sessions that ran in the cloud (claude.ai/code) keep their logs there, so they don&apos;t show here.
+      )}
+
+      {tab === "session" && (
+        <div className="dk-tab">
+          {/* ---- the team on its trading floor, talking: replays the picked session, live while it runs */}
+          {!allCc && (shown?.model === TEAM_MODEL || (!shown && d.driver === "team")) && (
+            <section className="panel">
+              <div className="row" style={{ marginBottom: 8 }}>
+                <h2 style={{ margin: 0 }}>✦ Trading floor</h2>
+                <span className="spacer" />
+                <span className="small muted">{shown ? new Date(shown.startedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""} · pick another session in the list below</span>
               </div>
-              <ClaudeSessionView key={ccShown.id} info={ccShown} />
-            </>
-          )
-        ) : shown?.model === TEAM_MODEL ? (
-          <TeamSessionView session={shown} onLive={load} />
-        ) : shown ? (
-          <AgentSessionView session={shown} live={running && !!live} />
-        ) : (
-          <>
-            <div className="small muted" style={{ marginBottom: 10 }}>
-              Run <code>/trade-desk</code> in Claude Code to start the trade team (a lead trader and 8 specialists using the real /trader-* skills, Time Machine included); its session shows here live. Or let Dodona&apos;s own desk trade with the button above.{" "}
-              {d.agent.enabled
-                ? "No session yet. Claude runs when there's a new setup or an open position to review, while the market is open. Every step it takes will show here live: its reasoning, each tool call with what came back, and the decision."
-                : "Once Claude is connected, every session shows here live: its reasoning, each tool it calls with what came back, and the decision. These are the tools it can use; all of them only read data:"}
+              <TradingFloor session={shown?.id} />
+            </section>
+          )}
+          <section className="panel" style={{ marginTop: 14 }}>
+            <div className="row" style={{ marginBottom: 10 }}>
+              <h2 style={{ margin: 0 }}>✦ Claude&apos;s session</h2>
+              <span className="spacer" />
+              <label className="small muted" style={{ display: "inline-flex", gap: 6, alignItems: "center", marginRight: 8 }} title="Show any Claude Code session of this project on this computer (this one included), not only the trade team's">
+                <input type="checkbox" checked={allCc} onChange={() => setAllCc(!allCc)} /> All Claude Code sessions
+              </label>
+              {allCc && ccList && ccList.length > 0 && (
+                <select className="as-pick" value={ccShown?.id} onChange={(e) => setCcPick(e.target.value)}>
+                  {ccList.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.live ? "● " : ""}
+                      {new Date(x.updatedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · {x.title.slice(0, 50)}
+                      {x.subagents ? ` · ${x.subagents} subagents` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {!allCc && saved.length > 1 && !(running && live) && (
+                <select className="as-pick" value={shown?.id} onChange={(e) => setPick(e.target.value)}>
+                  {saved.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {new Date(x.startedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · {x.model === TEAM_MODEL ? "trade team" : `${x.toolCalls} tools`} · {x.status}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
-            <AgentToolbox />
-          </>
-        )}
-      </section>
-
-      {/* ---- the real-account order ticket (IBKR), off until turned on in Settings */}
-      <IbkrOrderPanel />
-
-      {/* ---- stat tiles */}
-      <section className="dk-tiles">
-        <Tile label="Win rate" value={st.trades ? `${Math.round(st.winRate * 100)}%` : "—"} sub={`${st.trades} closed trade${st.trades === 1 ? "" : "s"}`} />
-        <Tile label="Profit factor" value={st.profitFactor !== undefined ? st.profitFactor.toFixed(2) : "—"} sub="won ÷ lost, over 1 = profitable" cls={st.profitFactor === undefined ? "" : st.profitFactor >= 1 ? "up" : "down"} />
-        <Tile label="Per trade" value={st.trades ? signedUsd(st.expectancy) : "—"} sub={st.trades ? `${st.avgR >= 0 ? "+" : ""}${st.avgR}R average` : "expectancy"} cls={tone(st.expectancy)} />
-        <Tile label="Avg win · loss" value={st.trades ? `${st.avgWin ? usd(st.avgWin) : "—"} · ${st.avgLoss ? usd(Math.abs(st.avgLoss)) : "—"}` : "—"} sub="after fees" />
-        <Tile label="Green · red days" value={`${st.greenDays} · ${st.redDays}`} sub={st.bestDay ? `best ${signedUsd(st.bestDay.pnl)}${st.worstDay ? `, worst ${signedUsd(st.worstDay.pnl)}` : ""}` : "no days yet"} />
-        <Tile label="Max drawdown" value={fmt.pct(st.maxDrawdown, 1)} sub="peak to low, end of day" cls={st.maxDrawdown < -0.1 ? "down" : ""} />
-        <Tile label="Streak" value={st.streak.kind === "none" ? "—" : `${st.streak.n} ${st.streak.kind === "win" ? "win" : "loss"}${st.streak.n === 1 ? "" : st.streak.kind === "win" ? "s" : "es"}`} sub={`fees ${usd(st.fees)}`} cls={st.streak.kind === "win" ? "up" : st.streak.kind === "loss" ? "down" : ""} />
-      </section>
-
-      {/* ---- charts */}
-      <section className="grid two" style={{ marginTop: 14 }}>
-        <div className="panel">
-          <div className="row" style={{ marginBottom: 8 }}>
-            <h2 style={{ margin: 0 }}>{chart === "equity" ? "Account value" : "Profit and loss by day"}</h2>
-            <span className="spacer" />
-            <div className="seg">
-              <button className={chart === "equity" ? "on" : ""} onClick={() => setChart("equity")}>Equity</button>
-              <button className={chart === "daily" ? "on" : ""} onClick={() => setChart("daily")}>Daily P&amp;L</button>
-            </div>
-          </div>
-          {chart === "equity" ? <EquityChart days={d.days} startCash={d.startCash} startDate={d.startedAt.slice(0, 10)} /> : <DailyPnlChart days={d.days} />}
-        </div>
-        <div className="panel">
-          <h2>Calendar</h2>
-          <PnlCalendar days={d.days} />
-          <h2 style={{ marginTop: 16 }}>How trades ended</h2>
-          <RDistribution rs={d.trades.map((t) => t.R)} />
-        </div>
-      </section>
-
-      {/* ---- Claude's read + positions */}
-      <section className="panel" style={{ marginTop: 14 }}>
-        <div className="row">
-          <h2 style={{ margin: 0 }}>Open positions</h2>
-          <span className="spacer" />
-          <span className="muted small">{d.positions.length} open</span>
-        </div>
-        {d.lastSummary && (
-          <div className="dk-read">
-            <span className="dk-read-icon">✦</span>
-            <div>
-              <div className="small muted">Claude&apos;s read · {fmt.ago(d.lastAgentAt)}</div>
-              {d.lastSummary}
-            </div>
-          </div>
-        )}
-        {d.positions.length === 0 ? (
-          <div className="dk-empty">Flat: no open positions. {d.market.open ? "The desk is watching for setups." : "The desk looks for entries while the market is open."}</div>
-        ) : (
-          <div className="dk-positions">
-            {d.positions.map((p) => {
-              const span = p.target - p.stop;
-              const at = span > 0 ? Math.min(100, Math.max(0, ((p.lastPrice - p.stop) / span) * 100)) : 0;
-              const ent = span > 0 ? ((p.entry - p.stop) / span) * 100 : 0;
-              return (
-                <div key={p.id} className="dk-pos">
-                  <div className="row">
-                    <Link href={`/ticker/${encodeURIComponent(p.symbol)}`} className="dk-sym">{p.symbol}</Link>
-                    <span className="pill">{p.style === "day" ? "Day" : "Swing"}</span>
-                    <span className="muted small">{p.setup} · {p.by === "team" ? "✦ Team" : p.by === "claude" ? "✦ Claude" : "Rules"}</span>
-                    <span className="spacer" />
-                    <span className={`mono ${tone(p.unrealized)}`}>{signedUsd(p.unrealized)} <span className="small">({fmt.signedPct(p.unrealizedPct)})</span></span>
+            {allCc ? (
+              ccErr ? (
+                <div className="err">{ccErr}</div>
+              ) : !ccList ? (
+                <div className="muted small"><Spinner /> Reading Claude Code sessions…</div>
+              ) : !ccShown ? (
+                <div className="dk-empty">No Claude Code sessions for this project on this computer yet.</div>
+              ) : (
+                <>
+                  <div className="small muted" style={{ marginBottom: 8 }}>
+                    Read from this computer&apos;s Claude Code transcripts. Sessions that ran in the cloud (claude.ai/code) keep their logs there, so they don&apos;t show here.
                   </div>
-                  <div className="dk-track" title={`stop ${usd(p.stop)} → target ${usd(p.target)}`}>
-                    <div className="dk-track-fill" style={{ width: `${at}%` }} />
-                    <i className="dk-track-entry" style={{ left: `${ent}%` }} />
-                  </div>
-                  <div className="row small mono muted">
-                    <span>stop {usd(p.stop)}{p.stop > p.initialStop ? " ↑" : ""}</span>
-                    <span>{p.qty} @ {usd(p.entry)} → {usd(p.lastPrice)}</span>
-                    <span className="spacer" />
-                    <span>target {usd(p.target)}</span>
-                  </div>
-                  <div className="small dk-thesis">{p.thesis}</div>
+                  <ClaudeSessionView key={ccShown.id} info={ccShown} />
+                </>
+              )
+            ) : shown?.model === TEAM_MODEL ? (
+              <TeamSessionView session={shown} onLive={load} />
+            ) : shown ? (
+              <AgentSessionView session={shown} live={running && !!live} />
+            ) : (
+              <>
+                <div className="small muted" style={{ marginBottom: 10 }}>
+                  Run <code>/trade-desk</code> in Claude Code to start the trade team (a lead trader and 8 specialists using the real /trader-* skills, Time Machine included); its session shows here live. Or let Dodona&apos;s own desk trade with the button above.{" "}
+                  {d.agent.enabled
+                    ? "No session yet. Claude runs when there's a new setup or an open position to review, while the market is open. Every step it takes will show here live: its reasoning, each tool call with what came back, and the decision."
+                    : "Once Claude is connected, every session shows here live: its reasoning, each tool it calls with what came back, and the decision. These are the tools it can use; all of them only read data:"}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
+                <AgentToolbox />
+              </>
+            )}
+          </section>
+        </div>
+      )}
 
-      {/* ---- last run */}
-      {report && (
+      {tab === "positions" && (
+        <div className="dk-tab">
+          <section className="panel">
         <section className="panel" style={{ marginTop: 14 }}>
-          <h2>Last run · {nyTime(report.at)}</h2>
-          <div className="small">
-            Scanned {report.scanned} stocks, {report.candidates.length} setup{report.candidates.length === 1 ? "" : "s"} found, {report.entries} bought, {report.exits} sold.
-            {report.tooPricey.length > 0 && <span className="muted"> Too pricey for whole shares in this account: {report.tooPricey.join(", ")}.</span>}
+          <div className="row">
+            <h2 style={{ margin: 0 }}>Open positions</h2>
+            <span className="spacer" />
+            <span className="muted small">{d.positions.length} open</span>
           </div>
-          {report.notes.map((n) => <div key={n} className="small muted">{n}</div>)}
-          {report.candidates.length > 0 && (
-            <div className="table-scroll" style={{ marginTop: 8 }}>
+          {d.lastSummary && (
+            <div className="dk-read">
+              <span className="dk-read-icon">✦</span>
+              <div>
+                <div className="small muted">Claude&apos;s read · {fmt.ago(d.lastAgentAt)}</div>
+                {d.lastSummary}
+              </div>
+            </div>
+          )}
+          {d.positions.length === 0 ? (
+            <div className="dk-empty">Flat: no open positions. {d.market.open ? "The desk is watching for setups." : "The desk looks for entries while the market is open."}</div>
+          ) : (
+            <div className="dk-positions">
+              {d.positions.map((p) => {
+                const span = p.target - p.stop;
+                const at = span > 0 ? Math.min(100, Math.max(0, ((p.lastPrice - p.stop) / span) * 100)) : 0;
+                const ent = span > 0 ? ((p.entry - p.stop) / span) * 100 : 0;
+                return (
+                  <div key={p.id} className="dk-pos">
+                    <div className="row">
+                      <Link href={`/ticker/${encodeURIComponent(p.symbol)}`} className="dk-sym">{p.symbol}</Link>
+                      <span className="pill">{p.style === "day" ? "Day" : "Swing"}</span>
+                      <span className="muted small">{p.setup} · {p.by === "team" ? "✦ Team" : p.by === "claude" ? "✦ Claude" : "Rules"}</span>
+                      <span className="spacer" />
+                      <span className={`mono ${tone(p.unrealized)}`}>{signedUsd(p.unrealized)} <span className="small">({fmt.signedPct(p.unrealizedPct)})</span></span>
+                    </div>
+                    <div className="dk-track" title={`stop ${usd(p.stop)} → target ${usd(p.target)}`}>
+                      <div className="dk-track-fill" style={{ width: `${at}%` }} />
+                      <i className="dk-track-entry" style={{ left: `${ent}%` }} />
+                    </div>
+                    <div className="row small mono muted">
+                      <span>stop {usd(p.stop)}{p.stop > p.initialStop ? " ↑" : ""}</span>
+                      <span>{p.qty} @ {usd(p.entry)} → {usd(p.lastPrice)}</span>
+                      <span className="spacer" />
+                      <span>target {usd(p.target)}</span>
+                    </div>
+                    <div className="small dk-thesis">{p.thesis}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+          </section>
+        {report && (
+          <section className="panel">
+            <h2>Last run · {nyTime(report.at)}</h2>
+            <div className="small">
+              Scanned {report.scanned} stocks, {report.candidates.length} setup{report.candidates.length === 1 ? "" : "s"} found, {report.entries} bought, {report.exits} sold.
+              {report.tooPricey.length > 0 && <span className="muted"> Too pricey for whole shares in this account: {report.tooPricey.join(", ")}.</span>}
+            </div>
+            {report.notes.map((n) => <div key={n} className="small muted">{n}</div>)}
+            {report.candidates.length > 0 && (
+              <div className="table-scroll" style={{ marginTop: 8 }}>
+                <table>
+                  <thead><tr><th>Stock</th><th>Setup</th><th>Price</th><th>Track record here</th></tr></thead>
+                  <tbody>
+                    {report.candidates.map((c) => (
+                      <tr key={c.key}>
+                        <td><b>{c.symbol}</b></td>
+                        <td>{c.setup} <span className="muted small">({c.style})</span></td>
+                        <td className="mono">{usd(c.price)}</td>
+                        <td className="small">{c.record?.verdict ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+        </div>
+      )}
+
+      {tab === "performance" && (
+        <div className="dk-tab">
+        <section className="dk-tiles" style={{ marginTop: 0 }}>
+          <Tile label="Win rate" value={st.trades ? `${Math.round(st.winRate * 100)}%` : "—"} sub={`${st.trades} closed trade${st.trades === 1 ? "" : "s"}`} />
+          <Tile label="Profit factor" value={st.profitFactor !== undefined ? st.profitFactor.toFixed(2) : "—"} sub="won ÷ lost, over 1 = profitable" cls={st.profitFactor === undefined ? "" : st.profitFactor >= 1 ? "up" : "down"} />
+          <Tile label="Per trade" value={st.trades ? signedUsd(st.expectancy) : "—"} sub={st.trades ? `${st.avgR >= 0 ? "+" : ""}${st.avgR}R average` : "expectancy"} cls={tone(st.expectancy)} />
+          <Tile label="Avg win · loss" value={st.trades ? `${st.avgWin ? usd(st.avgWin) : "—"} · ${st.avgLoss ? usd(Math.abs(st.avgLoss)) : "—"}` : "—"} sub="after fees" />
+          <Tile label="Green · red days" value={`${st.greenDays} · ${st.redDays}`} sub={st.bestDay ? `best ${signedUsd(st.bestDay.pnl)}${st.worstDay ? `, worst ${signedUsd(st.worstDay.pnl)}` : ""}` : "no days yet"} />
+          <Tile label="Max drawdown" value={fmt.pct(st.maxDrawdown, 1)} sub="peak to low, end of day" cls={st.maxDrawdown < -0.1 ? "down" : ""} />
+          <Tile label="Streak" value={st.streak.kind === "none" ? "—" : `${st.streak.n} ${st.streak.kind === "win" ? "win" : "loss"}${st.streak.n === 1 ? "" : st.streak.kind === "win" ? "s" : "es"}`} sub={`fees ${usd(st.fees)}`} cls={st.streak.kind === "win" ? "up" : st.streak.kind === "loss" ? "down" : ""} />
+        </section>
+        <section className="grid two">
+          <div className="panel">
+            <div className="row" style={{ marginBottom: 8 }}>
+              <h2 style={{ margin: 0 }}>{chart === "equity" ? "Account value" : "Profit and loss by day"}</h2>
+              <span className="spacer" />
+              <div className="seg">
+                <button className={chart === "equity" ? "on" : ""} onClick={() => setChart("equity")}>Equity</button>
+                <button className={chart === "daily" ? "on" : ""} onClick={() => setChart("daily")}>Daily P&amp;L</button>
+              </div>
+            </div>
+            {chart === "equity" ? <EquityChart days={d.days} startCash={d.startCash} startDate={d.startedAt.slice(0, 10)} /> : <DailyPnlChart days={d.days} />}
+          </div>
+          <div className="panel">
+            <h2>Calendar</h2>
+            <PnlCalendar days={d.days} />
+            <h2 style={{ marginTop: 16 }}>How trades ended</h2>
+            <RDistribution rs={d.trades.map((t) => t.R)} />
+          </div>
+        </section>
+          <section className="grid two">
+            <div className="panel">
+            <h2>By setup</h2>
+            {st.bySetup.length === 0 ? (
+              <div className="dk-empty">Shows which setups make money once trades close.</div>
+            ) : (
+              <div className="dk-setups">
+                {st.bySetup.map((x) => (
+                  <div key={x.setup} className="row small">
+                    <span>{x.setup}</span>
+                    <span className="spacer" />
+                    <span className="muted">{x.trades} · {Math.round(x.winRate * 100)}% · {x.avgR >= 0 ? "+" : ""}{x.avgR}R</span>
+                    <b className={`mono ${tone(x.pnl)}`}>{signedUsd(x.pnl)}</b>
+                  </div>
+                ))}
+              </div>
+            )}
+            </div>
+            <div className="panel">
+            <h2>Who traded</h2>
+            <div className="dk-setups">
+              {(["team", "claude", "rules"] as const).map((k) => (
+                <div key={k} className="row small">
+                  <span>{k === "team" ? "✦ Trade team" : k === "claude" ? "✦ Claude" : "Rules engine"}</span>
+                  <span className="spacer" />
+                  <span className="muted">{st.byAgent[k].trades} trades</span>
+                  <b className={`mono ${tone(st.byAgent[k].pnl)}`}>{signedUsd(st.byAgent[k].pnl)}</b>
+                </div>
+              ))}
+            </div>
+            </div>
+          </section>
+        <section className="panel">
+          <h2>Trade history</h2>
+          {d.trades.length === 0 ? (
+            <div className="dk-empty">No closed trades yet.</div>
+          ) : (
+            <div className="table-scroll">
               <table>
-                <thead><tr><th>Stock</th><th>Setup</th><th>Price</th><th>Track record here</th></tr></thead>
+                <thead>
+                  <tr><th>Closed</th><th>Stock</th><th>Setup</th><th>By</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Why out</th><th>P&amp;L</th><th>R</th></tr>
+                </thead>
                 <tbody>
-                  {report.candidates.map((c) => (
-                    <tr key={c.key}>
-                      <td><b>{c.symbol}</b></td>
-                      <td>{c.setup} <span className="muted small">({c.style})</span></td>
-                      <td className="mono">{usd(c.price)}</td>
-                      <td className="small">{c.record?.verdict ?? "—"}</td>
+                  {d.trades.map((t) => (
+                    <tr key={t.id} title={`${t.thesis}\n\nExit: ${t.exitNote}`}>
+                      <td className="small">{nyDate(t.exitAt)} {nyTime(t.exitAt)}</td>
+                      <td><b>{t.symbol}</b></td>
+                      <td className="small">{t.setup} <span className="muted">({t.style})</span></td>
+                      <td className="small">{t.by === "team" ? "✦ Team" : t.by === "claude" ? "✦ Claude" : "Rules"}</td>
+                      <td className="mono">{t.qty}</td>
+                      <td className="mono">{usd(t.entry)}</td>
+                      <td className="mono">{usd(t.exit)}</td>
+                      <td className="small">{REASON[t.reason] ?? t.reason}</td>
+                      <td className={`mono ${tone(t.pnl)}`}>{signedUsd(t.pnl)}</td>
+                      <td className={`mono ${tone(t.R)}`}>{t.R >= 0 ? "+" : ""}{t.R}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -475,110 +605,58 @@ export default function DeskPage() {
             </div>
           )}
         </section>
+        </div>
       )}
 
-      {/* ---- journal + trades */}
-      <section className="grid two" style={{ marginTop: 14 }}>
-        <div className="panel">
-          <div className="row" style={{ marginBottom: 8 }}>
-            <h2 style={{ margin: 0 }}>Desk journal</h2>
-            <span className="spacer" />
-            <div className="seg">
-              <button className={feed === "all" ? "on" : ""} onClick={() => setFeed("all")}>All</button>
-              <button className={feed === "trades" ? "on" : ""} onClick={() => setFeed("trades")}>Trades</button>
-              <button className={feed === "claude" ? "on" : ""} onClick={() => setFeed("claude")}>Claude</button>
-            </div>
-          </div>
-          {journal.length === 0 ? (
-            <div className="dk-empty">Nothing yet. Every buy, sell, skip and blocked trade lands here with the reason.</div>
-          ) : (
-            <ol className="dk-feed">
-              {journal.map((e, i) => (
-                <li key={`${e.at}-${i}`}>
-                  <span className={`dk-feed-icon ${KIND[e.kind].cls}`}>{KIND[e.kind].icon}</span>
-                  <div>
-                    <div className="small muted">{nyDate(e.at)} {nyTime(e.at)} · {e.by === "team" ? "✦ Team" : e.by === "claude" ? "✦ Claude" : e.by === "rules" ? "Rules" : "Desk"}</div>
-                    <div className="small">{e.text}</div>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
-        <div className="panel">
-          <h2>By setup</h2>
-          {st.bySetup.length === 0 ? (
-            <div className="dk-empty">Shows which setups make money once trades close.</div>
-          ) : (
-            <div className="dk-setups">
-              {st.bySetup.map((x) => (
-                <div key={x.setup} className="row small">
-                  <span>{x.setup}</span>
-                  <span className="spacer" />
-                  <span className="muted">{x.trades} · {Math.round(x.winRate * 100)}% · {x.avgR >= 0 ? "+" : ""}{x.avgR}R</span>
-                  <b className={`mono ${tone(x.pnl)}`}>{signedUsd(x.pnl)}</b>
-                </div>
-              ))}
-            </div>
-          )}
-          <h2 style={{ marginTop: 16 }}>Who traded</h2>
-          <div className="dk-setups">
-            {(["team", "claude", "rules"] as const).map((k) => (
-              <div key={k} className="row small">
-                <span>{k === "team" ? "✦ Trade team" : k === "claude" ? "✦ Claude" : "Rules engine"}</span>
-                <span className="spacer" />
-                <span className="muted">{st.byAgent[k].trades} trades</span>
-                <b className={`mono ${tone(st.byAgent[k].pnl)}`}>{signedUsd(st.byAgent[k].pnl)}</b>
+      {tab === "journal" && (
+        <div className="dk-tab">
+          <section className="grid two">
+          <div className="panel">
+            <div className="row" style={{ marginBottom: 8 }}>
+              <h2 style={{ margin: 0 }}>Desk journal</h2>
+              <span className="spacer" />
+              <div className="seg">
+                <button className={feed === "all" ? "on" : ""} onClick={() => setFeed("all")}>All</button>
+                <button className={feed === "trades" ? "on" : ""} onClick={() => setFeed("trades")}>Trades</button>
+                <button className={feed === "claude" ? "on" : ""} onClick={() => setFeed("claude")}>Claude</button>
               </div>
-            ))}
-          </div>
-          <h2 style={{ marginTop: 16 }}>Rules (trader/config.json)</h2>
-          <div className="small dk-rules">
-            <span>Budget <b>${d.rules.budget}</b></span>
-            <span>Cash kept <b>{d.rules.cash_buffer_pct}%</b></span>
-            <span>Max loss/trade <b>${d.rules.max_loss_per_trade_usd}</b></span>
-            <span>Daily loss limit <b>${d.rules.max_daily_loss_usd}</b></span>
-            <span>Trades/day <b>{d.rules.max_trades_per_day}</b></span>
-            <span>Reward:risk ≥ <b>{d.rules.min_reward_risk}</b></span>
-            <span>Entries <b>{d.rules.no_entries_before}–{d.rules.no_entries_after}</b></span>
-            <span>Flat by <b>{d.rules.flat_by}</b></span>
-            <span>Stops <b>{d.rules.require_stop ? "required" : "optional"}</b></span>
-          </div>
-          {!d.rulesFromFile && <div className="small warn" style={{ marginTop: 6 }}>trader/config.json not found: using the example rules. Say “set my rules” to make your own.</div>}
-          <button className="btn" style={{ marginTop: 12 }} onClick={reset}>Reset paper account</button>
-        </div>
-      </section>
-
-      <section className="panel" style={{ marginTop: 14 }}>
-        <h2>Trade history</h2>
-        {d.trades.length === 0 ? (
-          <div className="dk-empty">No closed trades yet.</div>
-        ) : (
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr><th>Closed</th><th>Stock</th><th>Setup</th><th>By</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Why out</th><th>P&amp;L</th><th>R</th></tr>
-              </thead>
-              <tbody>
-                {d.trades.map((t) => (
-                  <tr key={t.id} title={`${t.thesis}\n\nExit: ${t.exitNote}`}>
-                    <td className="small">{nyDate(t.exitAt)} {nyTime(t.exitAt)}</td>
-                    <td><b>{t.symbol}</b></td>
-                    <td className="small">{t.setup} <span className="muted">({t.style})</span></td>
-                    <td className="small">{t.by === "team" ? "✦ Team" : t.by === "claude" ? "✦ Claude" : "Rules"}</td>
-                    <td className="mono">{t.qty}</td>
-                    <td className="mono">{usd(t.entry)}</td>
-                    <td className="mono">{usd(t.exit)}</td>
-                    <td className="small">{REASON[t.reason] ?? t.reason}</td>
-                    <td className={`mono ${tone(t.pnl)}`}>{signedUsd(t.pnl)}</td>
-                    <td className={`mono ${tone(t.R)}`}>{t.R >= 0 ? "+" : ""}{t.R}</td>
-                  </tr>
+            </div>
+            {journal.length === 0 ? (
+              <div className="dk-empty">Nothing yet. Every buy, sell, skip and blocked trade lands here with the reason.</div>
+            ) : (
+              <ol className="dk-feed">
+                {journal.map((e, i) => (
+                  <li key={`${e.at}-${i}`}>
+                    <span className={`dk-feed-icon ${KIND[e.kind].cls}`}>{KIND[e.kind].icon}</span>
+                    <div>
+                      <div className="small muted">{nyDate(e.at)} {nyTime(e.at)} · {e.by === "team" ? "✦ Team" : e.by === "claude" ? "✦ Claude" : e.by === "rules" ? "Rules" : "Desk"}</div>
+                      <div className="small">{e.text}</div>
+                    </div>
+                  </li>
                 ))}
-              </tbody>
-            </table>
+              </ol>
+            )}
           </div>
-        )}
-      </section>
+            <div className="panel">
+            <h2>Rules (trader/config.json)</h2>
+            <div className="small dk-rules">
+              <span>Budget <b>${d.rules.budget}</b></span>
+              <span>Cash kept <b>{d.rules.cash_buffer_pct}%</b></span>
+              <span>Max loss/trade <b>${d.rules.max_loss_per_trade_usd}</b></span>
+              <span>Daily loss limit <b>${d.rules.max_daily_loss_usd}</b></span>
+              <span>Trades/day <b>{d.rules.max_trades_per_day}</b></span>
+              <span>Reward:risk ≥ <b>{d.rules.min_reward_risk}</b></span>
+              <span>Entries <b>{d.rules.no_entries_before}–{d.rules.no_entries_after}</b></span>
+              <span>Flat by <b>{d.rules.flat_by}</b></span>
+              <span>Stops <b>{d.rules.require_stop ? "required" : "optional"}</b></span>
+            </div>
+            {!d.rulesFromFile && <div className="small warn" style={{ marginTop: 6 }}>trader/config.json not found: using the example rules. Say “set my rules” to make your own.</div>}
+            <button className="btn" style={{ marginTop: 12 }} onClick={reset}>Reset paper account</button>
+            </div>
+          </section>
+        </div>
+      )}
+
 
       <p className="disclaimer">
         Paper trading only: the desk never sends an order to a broker. Fills are simulated from Yahoo&apos;s delayed 5-minute bars with 0.05% slippage and a $0.35 commission each way; a real stop can fill worse in a fast market. Past paper results don&apos;t promise future ones. Not financial advice.
