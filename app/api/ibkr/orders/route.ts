@@ -20,13 +20,13 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.clone().json().catch(() => null)) as { action?: string; fingerprints?: string[]; typed?: string; id?: string; confirmed?: boolean } | null;
+  const body = (await req.clone().json().catch(() => null)) as { action?: string; fingerprints?: string[]; typed?: string; oneClick?: boolean; id?: string; confirmed?: boolean } | null;
   const action = body?.action;
   const denied = action === "preview" ? localWrite(req) : fromDodonaPage(req);
   if (denied) return denied;
   try {
     if (action === "preview") return NextResponse.json({ ok: true, preview: await previewTicket() });
-    if (action === "place") return NextResponse.json(await placeTicket({ fingerprints: Array.isArray(body?.fingerprints) ? body!.fingerprints.map(String) : [], typed: String(body?.typed ?? "") }));
+    if (action === "place") return NextResponse.json(await placeTicket({ fingerprints: Array.isArray(body?.fingerprints) ? body!.fingerprints.map(String) : [], typed: String(body?.typed ?? ""), oneClick: body?.oneClick === true }));
     if (action === "answer") return NextResponse.json(await answerQuestion({ id: String(body?.id ?? ""), confirmed: body?.confirmed === true }));
     if (action === "cancel") return NextResponse.json({ ok: true, ...(await cancelUnfilled()) });
     if (action === "abandon") return NextResponse.json({ ok: true, dropped: abandonBatch() });

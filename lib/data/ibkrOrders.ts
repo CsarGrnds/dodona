@@ -12,6 +12,8 @@
 //      this, from a chat, a skill or a schedule.
 //   6. IBKR's own questions are never answered for you: each one comes back to you to confirm.
 //
+// Today's stop tickets (raise a holding's stop, or set one) go through here too; see stopTicket below.
+//
 // The morning flow: the trade team (run from the repo root against the real portfolio) stages up to
 // a day's trades as buy-STOP brackets, trader-risk checks them together, you approve the batch once,
 // and the orders wait at IBKR: each buys only if its breakout triggers, with its stop, target and a
@@ -21,7 +23,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { marketStatus } from "@/lib/clock";
-import { confirmMatches, confirmPhrase, entryRef, feeProblem, ibkrBracket, ibkrMoney, ibkrWarning, isPaperAccount, maxLossOf, nyIso, parsePlaceAnswer, ticketLines, type BracketPlan, type PlaceAnswer } from "@/lib/ibkrOrder";
+import { confirmMatches, confirmPhrase, entryRef, feeProblem, ibkrBracket, ibkrMoney, ibkrStopOrder, ibkrWarning, isPaperAccount, maxLossOf, nyIso, parsePlaceAnswer, planStopChange, stopConfirm, stopConfirmMatches, stopTicketLines, ticketLines, type BracketPlan, type PlaceAnswer, type StopChange } from "@/lib/ibkrOrder";
 import type { OpenOrder } from "@/lib/prep";
 import { nyClock } from "@/lib/setups";
 import { configPath } from "./desk";
@@ -54,7 +56,7 @@ interface LogRec {
   cost?: number; // qty x the entry price it was sized at: what it puts into the trade if it fills
   stop?: number;
   plain?: string;
-  status: "approved" | "placed" | "failed" | "declined" | "canceled";
+  status: "approved" | "placed" | "failed" | "declined" | "canceled" | "stop-changed";
   reply?: string;
   paper?: boolean;
   broker: "ibkr";
@@ -122,7 +124,9 @@ export interface IbkrTicket {
   dailyLimit?: number;
   batchCost: number; // what the batch puts into trades if every order fills
   spendable?: number; // the budget minus the cash buffer
+  maxFeePct: number; // round-trip fees may be at most this % of a trade's risk (Settings, default 25)
   confirm?: string; // what to type to place them
+  oneClick: boolean; // Settings → One-click approval: the click alone places them
   account?: string;
   accountIsPaper?: boolean;
   paperOnly: boolean;
@@ -198,11 +202,13 @@ export async function ibkrTicket(nowMs = Date.now()): Promise<IbkrTicket> {
     ready: problems.length === 0 && items.length > 0,
     problems,
     items,
+    maxFeePct: Number(cfg.max_fee_pct) > 0 ? Number(cfg.max_fee_pct) : 25,
     totalMaxLoss,
     dailyLimit,
     batchCost,
     spendable,
     confirm: items.length ? confirmPhrase(items.map((x) => x.plan)) : undefined,
+    oneClick: cfg.one_click === true,
     account,
     accountIsPaper: account ? isPaperAccount(account) : undefined,
     paperOnly,
@@ -258,8 +264,8 @@ interface Ctx {
   paper: boolean;
 }
 // the batch being placed (what's left of it) and IBKR's open questions, so only those ids can be answered
-const g = globalThis as unknown as { __dodonaIbkr?: { pending: Map<string, Ctx & { at: number }>; queue: Ctx[]; busy: boolean } };
-const S = (g.__dodonaIbkr ??= { pending: new Map(), queue: [] as Ctx[], busy: false });
+const g = globalThis as unknown as { __dodonaIbkr?: { pending: Map<string, Ctx & { at: number }>; queue: Ctx[]; busy: boolean; stops?: Map<string, StopCtx> } };
+const S = (g.__dodonaIbkr ??= { pending: new Map(), queue: [] as Ctx[], busy: false as boolean, stops: new Map<string, StopCtx>() });
 
 export interface PlaceResult {
   ok: boolean;
@@ -309,8 +315,8 @@ async function drain(res: PlaceResult) {
   res.note = `${res.placed.length ? `Sent to IBKR: ${res.placed.map((p) => p.symbol).join(", ")}. ` : ""}${res.questions.length ? "IBKR asks you to confirm first." : ""}${waiting ? ` ${waiting} more after that.` : ""}${res.failed.length ? ` Failed: ${res.failed.map((f) => f.symbol).join(", ")}.` : ""}`.trim();
 }
 
-/** Place the batch. Only from Dodona's page, after the user typed the confirmation and clicked. */
-export async function placeTicket(input: { fingerprints: string[]; typed: string }): Promise<PlaceResult> {
+/** Place the batch. Only from Dodona's page, on the user's click there (and their typed confirmation unless One-click approval is on). */
+export async function placeTicket(input: { fingerprints: string[]; typed: string; oneClick?: boolean }): Promise<PlaceResult> {
   const res: PlaceResult = { ok: false, placed: [], questions: [], failed: [], note: "" };
   if (S.busy || S.queue.length || S.pending.size) return { ...res, note: "A batch is already being sent; answer IBKR's questions or wait." };
   S.busy = true;
@@ -319,10 +325,11 @@ export async function placeTicket(input: { fingerprints: string[]; typed: string
     if (!t.ready || !t.account) return { ...res, note: t.problems[0] ?? "Not ready" };
     const fps = t.items.map((x) => x.fingerprint);
     if (fps.length !== input.fingerprints.length || fps.some((f, i) => f !== input.fingerprints[i])) return { ...res, note: "The orders changed since you looked at them. Look at the new tickets first." };
-    if (!confirmMatches(input.typed ?? "", t.items.map((x) => x.plan))) return { ...res, note: `Type ${t.confirm} to confirm.` };
+    const clicked = t.oneClick && input.oneClick === true;
+    if (!clicked && !confirmMatches(input.typed ?? "", t.items.map((x) => x.plan))) return { ...res, note: `Type ${t.confirm} to confirm.` };
     const paper = isPaperAccount(t.account);
     for (const it of t.items) {
-      await log({ fingerprint: it.fingerprint, symbol: it.plan.symbol, side: "buy", qty: String(it.plan.qty), kind: "entry", plain: it.lines[0], status: "approved", reply: `typed "${input.typed.trim()}" and clicked Place in Dodona`, paper, account: t.account });
+      await log({ fingerprint: it.fingerprint, symbol: it.plan.symbol, side: "buy", qty: String(it.plan.qty), kind: "entry", plain: it.lines[0], status: "approved", reply: clicked ? `approved with one click in Dodona (${t.confirm})` : `typed "${input.typed.trim()}" and clicked Place in Dodona`, paper, account: t.account });
       S.queue.push({ fingerprint: it.fingerprint, plan: it.plan, account: t.account, paper });
     }
     await call("GET", "/v1/api/iserver/accounts").catch(() => undefined);
@@ -337,6 +344,8 @@ export async function placeTicket(input: { fingerprints: string[]; typed: string
 /** The user's answer to one of IBKR's questions; then the rest of the batch continues. */
 export async function answerQuestion(input: { id: string; confirmed: boolean }): Promise<PlaceResult> {
   const res: PlaceResult = { ok: false, placed: [], questions: [], failed: [], note: "" };
+  const sc = S.stops?.get(input.id);
+  if (sc) return answerStopQuestion(input, sc, res);
   const ctx = S.pending.get(input.id);
   if (!ctx || Date.now() - ctx.at > 5 * 60_000) {
     S.pending.delete(input.id);
@@ -367,6 +376,172 @@ export function abandonBatch(): number {
   S.queue = [];
   S.pending.clear();
   return n;
+}
+
+// ---------------------------------------------------------------- stop tickets (Today's "raise this stop")
+//
+// One sell STOP protecting a holding: raise the stop order resting at IBKR, or set one where there is
+// none. The same gates as a batch where they apply: on only with "ibkr_orders" and "broker": "ibkr",
+// paper accounts only while "paper" is on, stops only move up, never at or above the price, never
+// under your cost with "Never sell at a loss", never more shares than you hold, never the same change
+// twice, only on your click in Dodona (with "STOP TSLA 352.10" typed unless One-click approval is on),
+// and IBKR's questions come back to you. A stop change is logged as "stop-changed", so trader-risk
+// doesn't count it as a trade.
+
+export interface StopTicketView {
+  symbol: string;
+  ready: boolean;
+  problems: string[];
+  change?: StopChange;
+  lines: string[];
+  fingerprint?: string;
+  confirm?: string;
+  oneClick: boolean;
+  account?: string;
+  accountIsPaper?: boolean;
+  price?: number;
+  avgCost?: number;
+  shares?: number;
+}
+
+async function positionFor(account: string, symbol: string): Promise<{ shares: number; avgCost: number; price: number; conid?: number } | undefined> {
+  const a = encodeURIComponent(account);
+  for (let page = 0; page < 10; page++) {
+    const rows = await call<Array<Record<string, unknown>>>("GET", `/v1/api/portfolio/${a}/positions/${page}`).catch(() => []);
+    if (!Array.isArray(rows) || !rows.length) break;
+    const r = rows.find((x) => String(x.ticker ?? x.contractDesc ?? "").toUpperCase() === symbol && Number(x.position) !== 0);
+    if (r) return { shares: Number(r.position), avgCost: Number(r.avgCost ?? r.avgPrice ?? 0), price: Number(r.mktPrice ?? 0), conid: Number(r.conid) || undefined };
+    if (rows.length < 100) break;
+  }
+  return undefined;
+}
+
+const stopFingerprint = (c: StopChange) => createHash("sha256").update(`stop|${c.symbol}|${c.orderId ?? "new"}|${c.qty}|${c.to.toFixed(2)}`).digest("hex").slice(0, 16);
+
+export async function stopTicket(input: { symbol: string; to: number; noLoss: boolean; price?: number }, nowMs = Date.now()): Promise<StopTicketView & { conid?: number }> {
+  const symbol = String(input.symbol ?? "").trim().toUpperCase();
+  const cfg = ((await readJson(configPath())) ?? {}) as Record<string, unknown>;
+  const paperOnly = cfg.paper !== false;
+  const out: StopTicketView & { conid?: number } = { symbol, ready: false, problems: [], lines: [], oneClick: cfg.one_click === true };
+  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(symbol)) return { ...out, problems: ["Not a ticker."] };
+  if (String(cfg.broker ?? "").toLowerCase() !== "ibkr") out.problems.push(`Your broker is set to "${cfg.broker ?? "alpaca"}"; set it to IBKR in Settings.`);
+  if (cfg.ibkr_orders !== true) out.problems.push("Sending orders to IBKR is off; turn it on in Settings.");
+  const gw = await gatewayStatus();
+  if (gw.state !== "ready") {
+    out.problems.push(gw.state === "login" ? "Log in to the IBKR gateway (say “refresh IBKR” in Claude Code)." : `The IBKR gateway isn't running (${gw.message ?? "down"}).`);
+    return out;
+  }
+  const account = gw.account ?? (await accountId().catch(() => undefined));
+  if (!account) return { ...out, problems: [...out.problems, "The gateway returned no account."] };
+  out.account = account;
+  out.accountIsPaper = isPaperAccount(account);
+  if (paperOnly && !out.accountIsPaper) out.problems.push(`Paper trading is on, so orders only go to a paper account, but the gateway is logged in to a live account (…${account.slice(-3)}).`);
+
+  const pos = await positionFor(account, symbol);
+  const stops = (await openOrders()).filter((o) => o.ticker === symbol && o.side === "SELL" && o.stop !== undefined);
+  // IBKR's position price can lag; the price Today showed is used when it is lower (a stop must stay under both)
+  const price = Math.min(...[pos?.price, input.price].filter((v): v is number => typeof v === "number" && v > 0));
+  const facts = { shares: pos?.shares ?? 0, avgCost: pos?.avgCost ?? 0, price: Number.isFinite(price) ? price : 0, noLoss: input.noLoss, stops };
+  Object.assign(out, { price: facts.price || undefined, avgCost: facts.avgCost || undefined, shares: facts.shares || undefined });
+  const plan = planStopChange(symbol, Number(input.to), facts);
+  if (!plan.ok) {
+    out.problems.push(plan.reason);
+    return out;
+  }
+  const c = plan.change;
+  out.change = c;
+  out.fingerprint = stopFingerprint(c);
+  out.confirm = stopConfirm(c);
+  out.lines = stopTicketLines(c, account, out.accountIsPaper, facts);
+  out.conid = stops[0]?.conid ?? pos?.conid;
+  const st = await readJson(BROKER());
+  const hit = ((st?.orders ?? []) as LogRec[]).find((r) => r.fingerprint === out.fingerprint && r.date === nyClock(nowMs).date && r.status === "stop-changed");
+  if (hit) out.problems.push(`This exact stop change was already sent today (${hit.at.slice(11, 16)}); it is never sent twice.`);
+  out.ready = out.problems.length === 0;
+  return out;
+}
+
+interface StopCtx {
+  change: StopChange;
+  fingerprint: string;
+  account: string;
+  paper: boolean;
+  at: number;
+}
+
+async function finishStop(ans: PlaceAnswer, ctx: StopCtx, res: PlaceResult) {
+  const c = ctx.change;
+  const base = { fingerprint: ctx.fingerprint, symbol: c.symbol, side: "sell", qty: String(c.qty), kind: "stop", stop: c.to, paper: ctx.paper, account: ctx.account };
+  if (ans.error) {
+    await log({ ...base, status: "failed", note: ans.error });
+    res.failed.push({ symbol: c.symbol, error: ans.error });
+    return;
+  }
+  for (const q of ans.questions) {
+    S.stops ??= new Map();
+    S.stops.set(q.id, { ...ctx, at: Date.now() });
+    res.questions.push({ id: q.id, symbol: c.symbol, messages: q.messages });
+  }
+  if (ans.placed.length) {
+    await log({ ...base, status: "stop-changed", plain: c.orderId ? `stop ${c.from} → ${c.to}` : `new stop ${c.to}`, broker_order_id: ans.placed.map((p) => p.orderId).join(",") });
+    res.placed.push({ symbol: c.symbol, orderIds: ans.placed.map((p) => p.orderId) });
+  }
+}
+
+/** Send one stop ticket. Only from Dodona's page, on the user's click there (and their typed confirmation unless One-click approval is on). */
+export async function placeStopTicket(input: { symbol: string; to: number; noLoss: boolean; price?: number; fingerprint: string; typed: string; oneClick?: boolean }): Promise<PlaceResult> {
+  const res: PlaceResult = { ok: false, placed: [], questions: [], failed: [], note: "" };
+  if (S.busy) return { ...res, note: "Another order is being sent; try again in a moment." };
+  S.busy = true;
+  try {
+    const t = await stopTicket(input); // every gate, again, right now
+    if (!t.ready || !t.change || !t.account) return { ...res, note: t.problems[0] ?? "Not ready" };
+    if (t.fingerprint !== input.fingerprint) return { ...res, note: "The stop changed at IBKR since you looked at it. Look at the new ticket first." };
+    const clicked = t.oneClick && input.oneClick === true;
+    if (!clicked && !stopConfirmMatches(input.typed ?? "", t.change)) return { ...res, note: `Type ${t.confirm} to confirm.` };
+    const c = t.change;
+    const ctx: StopCtx = { change: c, fingerprint: t.fingerprint, account: t.account, paper: isPaperAccount(t.account), at: Date.now() };
+    await log({ fingerprint: ctx.fingerprint, symbol: c.symbol, side: "sell", qty: String(c.qty), kind: "stop", stop: c.to, plain: t.lines[1], status: "approved", reply: clicked ? `approved with one click in Dodona (${t.confirm})` : `typed "${input.typed.trim()}" and clicked Send in Dodona`, paper: ctx.paper, account: ctx.account });
+    await call("GET", "/v1/api/iserver/accounts").catch(() => undefined);
+    try {
+      const conid = t.conid ?? (await conidFor(c.symbol));
+      const a = encodeURIComponent(t.account);
+      const raw = c.orderId
+        ? await call<unknown>("POST", `/v1/api/iserver/account/${a}/order/${encodeURIComponent(c.orderId)}`, 20_000, ibkrStopOrder(c, t.account, conid))
+        : await call<unknown>("POST", `/v1/api/iserver/account/${a}/orders`, 20_000, { orders: [ibkrStopOrder(c, t.account, conid, `dodona-stop-${ctx.fingerprint.slice(0, 10)}`)] });
+      await finishStop(parsePlaceAnswer(raw), ctx, res);
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      await log({ fingerprint: ctx.fingerprint, symbol: c.symbol, side: "sell", kind: "stop", status: "failed", note: error, account: ctx.account, paper: ctx.paper });
+      res.failed.push({ symbol: c.symbol, error });
+    }
+    res.note = res.placed.length ? `Sent to IBKR: ${c.symbol} stop ${c.orderId ? `raised to` : "set at"} $${c.to.toFixed(2)}.` : res.questions.length ? "IBKR asks you to confirm first." : res.failed.length ? `Failed: ${res.failed[0].error}` : "";
+    res.ok = !res.failed.length;
+    return res;
+  } finally {
+    S.busy = false;
+  }
+}
+
+async function answerStopQuestion(input: { id: string; confirmed: boolean }, ctx: StopCtx, res: PlaceResult): Promise<PlaceResult> {
+  S.stops!.delete(input.id);
+  if (Date.now() - ctx.at > 5 * 60_000) return { ...res, note: "That question has expired. Open the ticket again." };
+  if (S.busy) return { ...res, note: "Busy; try again in a moment." };
+  S.busy = true;
+  try {
+    if (!input.confirmed) {
+      await call("POST", `/v1/api/iserver/reply/${encodeURIComponent(input.id)}`, 10_000, { confirmed: false }).catch(() => undefined);
+      await log({ fingerprint: ctx.fingerprint, symbol: ctx.change.symbol, side: "sell", kind: "stop", status: "declined", reply: "said no to IBKR's question", account: ctx.account, paper: ctx.paper });
+      res.note = `${ctx.change.symbol} stop not changed.`;
+    } else {
+      await finishStop(parsePlaceAnswer(await call<unknown>("POST", `/v1/api/iserver/reply/${encodeURIComponent(input.id)}`, 20_000, { confirmed: true })), ctx, res);
+      res.note = res.placed.length ? `Sent to IBKR: ${ctx.change.symbol} stop at $${ctx.change.to.toFixed(2)}.` : res.questions.length ? "IBKR has another question." : res.failed.length ? `Failed: ${res.failed[0].error}` : "";
+    }
+    res.ok = !res.failed.length;
+    return res;
+  } finally {
+    S.busy = false;
+  }
 }
 
 // ---------------------------------------------------------------- cancel today's unfilled entries

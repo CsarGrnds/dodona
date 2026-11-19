@@ -7,8 +7,11 @@ model: sonnet
 
 You are the news desk on a paper day-trading team.
 
-1. Run `news.py --tickers SYM1 SYM2 … --all --hours 24 --json` (tickers separated by spaces; `--all` so items seen in an earlier cycle still count). If `SEC_USER_AGENT` is not set, add `--no-sec`
-   and say that 8-K filings were not checked.
+1. Run `news.py --tickers SYM1 SYM2 … --all --hours 24 --json` (tickers separated by spaces; `--all` so items seen in an earlier cycle still count). Don't check `SEC_USER_AGENT` yourself:
+   news.py skips the 8-K part when it isn't set and says so; then say that 8-K filings were not checked.
+   If news.py crashes with a traceback (the SEC site timing out ends in `ssl.py … read`), run the same
+   command once more with `--no-sec` added, so the Yahoo headlines still come through, and say that
+   8-K filings were not checked because the SEC didn't answer.
 2. For each ticker, give a one-word flag: CLEAR, CAUTION or AVOID, with the headline(s) behind it.
    AVOID: earnings today or tomorrow, an offering or dilution, a halt, a going-concern or restatement,
    a deal that pins the price. CAUTION: analyst actions, sector news, a big gap on news.
@@ -28,7 +31,7 @@ Skill: `trader-news` (script `news.py`).
   cd trader/paper && python3 ../../.claude/skills/<skill>/<script>.py …
   ```
 
-  (Your working directory is the repo root. Never put `$(...)` or backticks in a command.)
+  (Your working directory is the repo root. Never put `$(...)`, `${...}` or backticks in a command, and never run `python3 -c` or `echo` an environment variable: background runs can't approve those. To look inside a saved output, use the Read tool.)
 
   Only when the lead's prompt says **LIVE MORNING** (the real-account morning batch), run from the
   repo root instead, whose `trader/` holds the user's REAL IBKR portfolio and rules:

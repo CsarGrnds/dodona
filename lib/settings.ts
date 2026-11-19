@@ -76,14 +76,15 @@ export const RULE_SECTIONS: Section[] = [
       { key: "broker", label: "Broker", type: "choice", options: [{ value: "ibkr", label: "Interactive Brokers" }, { value: "alpaca", label: "Alpaca" }], help: "Which broker /trader-broker and Dodona's order ticket work with." },
       { key: "auto_batch", label: "Prepare the batch by itself", type: "bool", help: "At the times below, Dodona starts the trade team (/trade-desk live) on its own, and puts a notification on this Mac when a batch is ready. It never places anything: you still approve each batch on the Desk, within 15 minutes. Needs Dodona running and the gateway logged in." },
       { key: "auto_batch_times", label: "Batch times (New York)", type: "text", help: "When to prepare a batch, between 09:46 and 15:00, separated by commas. Each run uses your Claude plan." },
-      { key: "ibkr_orders", label: "Send orders to IBKR", type: "bool", help: "Lets you place the order trader-risk passed from Dodona's Desk, through the IBKR gateway: only on your typed confirmation and click, and only to a paper account (DU…) while Paper trading is on." },
+      { key: "ibkr_orders", label: "Send orders to IBKR", type: "bool", help: "Lets you place the order trader-risk passed from Dodona's Desk, through the IBKR gateway: only on your approval in Dodona, and only to a paper account (DU…) while Paper trading is on." },
+      { key: "one_click", label: "One-click approval", type: "bool", help: "Place a ready batch, or send a stop ticket from Today, with one click on its button, without typing its confirmation. The button names the orders, their cost and max loss (or the new stop). Every other gate stays: trader-risk's PASS within 15 minutes, fees, budget and daily limit, never the same order twice, only from Dodona's page, and IBKR's own questions still come to you." },
     ],
   },
 ];
 
 /** Safety switches the page shows but never changes: they are yours to change in trader/config.json. */
 export const LOCKED: Array<{ key: string; label: string; safe: unknown; help: string }> = [
-  { key: "paper", label: "Paper trading", safe: true, help: "Orders to IBKR only go to a paper account (DU…). The trade team always runs on paper, whatever this says." },
+  { key: "paper", label: "Paper trading", safe: true, help: "On: orders to IBKR only go to a paper account (DU…). Off: batches you approve on the Desk go to your real IBKR account. Either way the trade team never sends an order itself; its own trades book on Dodona's paper desk." },
   { key: "allow_margin", label: "Margin", safe: false, help: "Borrowed money." },
   { key: "allow_short", label: "Short selling", safe: false, help: "Selling stock you don't own." },
   { key: "allow_options", label: "Options", safe: false, help: "Contracts, not shares." },
