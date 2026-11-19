@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import IbkrSync from "@/components/IbkrSync";
 import { MarketBanner } from "@/components/SetupBits";
+import { StopTicket } from "@/components/StopTicket";
 import { MarketClock } from "@/components/TickerPanels";
 import { Brand, Disclaimer, Spinner } from "@/components/ui";
 import { fmt } from "@/lib/client";
@@ -25,6 +26,7 @@ export default function TodayPage() {
   const [err, setErr] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [rules, setR] = useState<TradingRules>();
+  const [ticket, setTicket] = useState<string>(); // the holding whose stop ticket is open
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -47,7 +49,11 @@ export default function TodayPage() {
     load();
   }, [load]);
 
-  const held = useMemo(() => d?.rows.filter((r) => r.source.held) ?? [], [d]);
+  // what needs doing first: no stop or one under cost, then raises, then the rest; holds last
+  const held = useMemo(() => {
+    const rank = (r: PrepRow) => ({ missing: 0, above: 0, "below-cost": 0, raise: 1, partial: 1, tight: 2, keep: 3, hold: 4 } as Record<string, number>)[r.stop?.verdict ?? ""] ?? 5;
+    return (d?.rows.filter((r) => r.source.held) ?? []).map((r, i) => ({ r, i })).sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i).map((x) => x.r);
+  }, [d]);
   const todos = useMemo(() => (d ? todoList(d.rows) : []), [d]);
   const dips = useMemo(() => {
     const rank: Record<DipVerdict, number> = { discount: 0, watch: 1, falling: 2, none: 3 };
@@ -151,7 +157,16 @@ export default function TodayPage() {
                   </thead>
                   <tbody>
                     {held.map((r) => (
-                      <StopRow key={r.symbol} r={r} />
+                      <Fragment key={r.symbol}>
+                        <StopRow r={r} canTicket={ordersReady} open={ticket === r.symbol} onTicket={() => setTicket(ticket === r.symbol ? undefined : r.symbol)} />
+                        {ticket === r.symbol && r.stop && (
+                          <tr className="st-row">
+                            <td colSpan={7}>
+                              <StopTicket symbol={r.symbol} suggested={r.stop.suggested} price={r.price} noLoss={d.rules.neverSellAtLoss} onClose={() => setTicket(undefined)} onSent={() => setTimeout(load, 2500)} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -220,7 +235,7 @@ export default function TodayPage() {
           )}
           {d.warnings.length > 0 && <div className="warn">{d.warnings.join(" · ")}</div>}
           <p className="muted small">
-            Dodona reads your orders from IBKR and never places, moves or cancels one. Make the change in IBKR (TWS, IBKR Mobile or the Client Portal). Prices are Yahoo&apos;s, as of {new Date(d.asOf).toLocaleString()}.
+            Dodona reads your orders from IBKR; the only ones it changes are stops you send from a ticket above. Change buy limits in IBKR (TWS, IBKR Mobile or the Client Portal). Prices are Yahoo&apos;s, as of {new Date(d.asOf).toLocaleString()}.
           </p>
         </div>
       )}
@@ -229,7 +244,17 @@ export default function TodayPage() {
   );
 }
 
-function StopRow({ r }: { r: PrepRow }) {
+/** A stop the rule says to set or raise, below the price: it can become a ticket for IBKR. */
+const ticketable = (r: PrepRow) => {
+  const s = r.stop;
+  if (!s || !r.price || !(s.suggested < r.price)) return false;
+  // IBKR's API can't modify a fractional order: those stops are raised in IBKR itself
+  if ((r.orders ?? []).some((o) => o.side === "SELL" && o.stop !== undefined && !Number.isInteger(o.qty))) return false;
+  if (s.verdict === "raise" || s.verdict === "missing") return true;
+  return s.verdict === "below-cost" && (s.current === undefined || s.suggested > s.current);
+};
+
+function StopRow({ r, canTicket, open, onTicket }: { r: PrepRow; canTicket: boolean; open: boolean; onTicket: () => void }) {
   if (r.error) {
     return (
       <tr>
@@ -259,23 +284,39 @@ function StopRow({ r }: { r: PrepRow }) {
       <td className="mono">
         {stops.length ? stops.map((o) => <div key={o.orderId} title={o.desc}>{money(o.stop)}{o.kind !== "stop" ? <span className="muted small"> {o.kind}</span> : null}</div>) : <span className="muted">none</span>}
       </td>
-      <td className="mono" title={r.suggestion?.candidates.map((c) => `${c.key}: $${c.price.toFixed(2)} — ${c.detail}`).join("\n")}>
-        {s?.verdict === "hold" ? <span className="muted">hold</span> : money(s?.suggested ?? r.suggestion?.price)}
-        {s?.rule && <div><span className="tag" title={s.rule}>your rule</span></div>}
-        {r.suggestion && !s?.rule && <div className="muted small">{r.suggestion.basis === "floor" ? "1 ATR floor" : r.suggestion.basis === "fallback" ? "2 ATRs" : r.suggestion.basis}</div>}
-        {r.suggestion?.trailBroken && <div className="caution small" title="Already fell past the 3-ATR trailing stop from its 22-day high">off its high</div>}
+      <td className="mono" style={{ minWidth: 140 }} title={r.suggestion?.candidates.map((c) => `${c.key}: $${c.price.toFixed(2)} — ${c.detail}`).join("\n")}>
+        <div className="nowrap">{s?.verdict === "hold" ? <span className="muted">—</span> : money(s?.suggested ?? r.suggestion?.price)}</div>
+        <div className="chips">
+          {s?.rule ? <span className="chip" title={s.rule}>your rule</span> : r.suggestion && <span className="chip" title="What set the rule stop">{r.suggestion.basis === "floor" ? "1 ATR floor" : r.suggestion.basis === "fallback" ? "2 ATRs" : r.suggestion.basis}</span>}
+          {r.suggestion?.trailBroken && <span className="chip care" title="Already fell past the 3-ATR trailing stop from its 22-day high">off high</span>}
+        </div>
       </td>
       <td style={{ minWidth: 260 }}>
         {s ? (
           <>
             <span className={`pill ${STOP_CLS[s.verdict]}`}>{STOP_LABEL[s.verdict]}</span> <b className="small">{s.headline}</b>
-            <div className="small muted">{s.detail}</div>
+            {s.verdict === "hold" ? (
+              <details className="why small muted">
+                <summary>Why</summary>
+                {s.detail}
+              </details>
+            ) : (
+              <div className="small muted">{s.detail}</div>
+            )}
+            {canTicket && (s.verdict === "raise" || s.verdict === "below-cost") && !ticketable(r) && stops.some((o) => !Number.isInteger(o.qty)) && (
+              <div className="small muted" style={{ marginTop: 4 }}>Fractional stop: IBKR doesn&apos;t let Dodona change it, so raise it in IBKR.</div>
+            )}
+            {canTicket && ticketable(r) && (
+              <button className={`btn ${open ? "" : "ghost"} st-open`} onClick={onTicket} title="A ticket for IBKR: you see it in full and send it only on your yes">
+                {open ? "Close ticket" : s.current !== undefined ? `Raise to $${s.suggested.toFixed(2)} at IBKR…` : `Set $${s.suggested.toFixed(2)} at IBKR…`}
+              </button>
+            )}
           </>
         ) : (
           <span className="muted small">Not enough history for a stop</span>
         )}
       </td>
-      <td className="mono small">
+      <td className="mono small nowrap">
         {s?.riskNow !== undefined && <div>{s.riskNow < 0 ? <span className="up">+{money(-s.riskNow)} locked</span> : money(s.riskNow)}</div>}
         {s && (s.verdict === "raise" || s.verdict === "missing") && <div className="muted">→ {s.riskAfter < 0 ? <span className="up">+{money(-s.riskAfter)} locked</span> : money(s.riskAfter)}</div>}
       </td>

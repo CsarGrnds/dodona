@@ -189,6 +189,8 @@ class Fetcher(object):
             raise NewsError("HTTP %s for %s" % (exc.code, url))
         except urllib.error.URLError as exc:
             raise NewsError("could not reach %s: %s" % (url, exc.reason))
+        except (TimeoutError, OSError) as exc:  # a read that stalls (socket timeout, reset): skip this one, keep the rest
+            raise NewsError("no answer from %s: %s" % (url, exc or type(exc).__name__))
 
 
 def yahoo_symbol(ticker):

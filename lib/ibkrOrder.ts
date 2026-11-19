@@ -138,3 +138,79 @@ export function ibkrMoney(v: unknown): number | undefined {
 
 /** IBKR's warnings come as "20/You are trying to…": drop the code, keep the words. */
 export const ibkrWarning = (v: unknown) => (v ? String(v).replace(/^\d+\//, "").replace(/\s+/g, " ").trim() : undefined);
+
+// ---------------------------------------------------------------- stop tickets (Today's "raise this stop")
+
+/** A change to the stop protecting a holding: raise the stop order resting at IBKR, or set one where there is none. */
+export interface StopChange {
+  symbol: string;
+  qty: number; // the shares the stop sells
+  to: number; // the new stop
+  from?: number; // the stop at IBKR now; none = a new stop order
+  orderId?: string;
+  tif: "GTC" | "DAY";
+}
+
+/** What the server read just now, from IBKR, about the holding. */
+export interface StopFacts {
+  shares: number;
+  avgCost: number;
+  price: number;
+  noLoss: boolean; // the user's "Never sell at a loss" rule
+  stops: Array<{ orderId: string; kind: string; stop?: number; qty: number; tif: string }>; // its sell stops resting at IBKR
+}
+
+const floorC = (v: number) => Math.floor(v * 100 + 1e-9) / 100;
+
+/** The stop change for a new stop price, or why it can't be made from Dodona. Pure. Stops only move up; a stop never sells more than you hold. */
+export function planStopChange(symbol: string, toRaw: number, f: StopFacts): { ok: true; change: StopChange } | { ok: false; reason: string } {
+  const sym = symbol.toUpperCase();
+  const to = floorC(toRaw);
+  if (!(to > 0)) return { ok: false, reason: "The new stop must be a price above $0." };
+  if (!(f.shares > 0)) return { ok: false, reason: `You don't hold ${sym} at IBKR.` };
+  if (!(f.price > 0)) return { ok: false, reason: `No price for ${sym}.` };
+  if (to >= f.price) return { ok: false, reason: `$${to.toFixed(2)} is at or above the price $${f.price.toFixed(2)}: a sell stop there fills at once.` };
+  if (f.noLoss && f.avgCost > 0 && to < Math.ceil(f.avgCost * 100 - 1e-9) / 100)
+    return { ok: false, reason: `$${to.toFixed(2)} is under your average cost $${f.avgCost.toFixed(2)}, and your rule is never to sell at a loss.` };
+  if (f.stops.length > 1) return { ok: false, reason: `${sym} has ${f.stops.length} stop orders at IBKR; change them in IBKR so nothing sells twice.` };
+  const cur = f.stops[0];
+  if (cur) {
+    if (cur.kind !== "stop") return { ok: false, reason: `${sym}'s stop is a ${cur.kind} order; change it in IBKR.` };
+    if (!(cur.stop! > 0)) return { ok: false, reason: `Couldn't read the price of ${sym}'s stop order.` };
+    if (to <= cur.stop!) return { ok: false, reason: `Stops only move up: $${to.toFixed(2)} isn't above the current $${cur.stop!.toFixed(2)}.` };
+    if (cur.qty > f.shares + 1e-6) return { ok: false, reason: `The stop order sells ${cur.qty} shares but you hold ${f.shares}; fix it in IBKR.` };
+    // IBKR's API refuses to modify an order for a fractional quantity ("Fractional quantity is not supported for this modification")
+    if (!Number.isInteger(cur.qty)) return { ok: false, reason: `${sym}'s stop sells ${+cur.qty.toFixed(4)} shares, a fraction, and IBKR doesn't let Dodona change a fractional order. Raise it to $${to.toFixed(2)} in IBKR (TWS, IBKR Mobile or the Client Portal).` };
+    const tif = cur.tif.toUpperCase() === "DAY" ? "DAY" : "GTC";
+    return { ok: true, change: { symbol: sym, qty: cur.qty, to, from: cur.stop, orderId: cur.orderId, tif } };
+  }
+  const qty = Math.floor(f.shares + 1e-9);
+  if (qty < 1) return { ok: false, reason: `You hold less than one whole share of ${sym}; set its stop in IBKR.` };
+  return { ok: true, change: { symbol: sym, qty, to, tif: "GTC" } };
+}
+
+/** The IBKR order for a stop change: a sell STOP, sent as a modify (raise) or a new order (set). */
+export function ibkrStopOrder(c: StopChange, acctId: string, conid: number, cOID?: string) {
+  return { acctId, conid, ...(cOID ? { cOID } : {}), orderType: "STP" as const, side: "SELL" as const, price: cents(c.to), quantity: c.qty, tif: c.tif, outsideRTH: false as const };
+}
+
+/** The stop ticket in plain words. */
+export function stopTicketLines(c: StopChange, account: string, paper: boolean, f: Pick<StopFacts, "shares" | "avgCost" | "price">): string[] {
+  const vsCost = c.qty * (c.to - f.avgCost);
+  const costNote = f.avgCost > 0 ? (vsCost >= 0 ? `; $${vsCost.toFixed(2)} over your cost` : `; $${(-vsCost).toFixed(2)} under your cost`) : "";
+  const out = [
+    `${paper ? "PAPER" : "LIVE"} account ${account}, Interactive Brokers`,
+    c.orderId
+      ? `CHANGE stop order #${c.orderId}: SELL ${+c.qty.toFixed(4)} ${c.symbol} STOP $${c.from!.toFixed(2)} → $${c.to.toFixed(2)}, ${c.tif === "GTC" ? "good till canceled" : "good for today"}`
+      : `NEW SELL ${c.qty} ${c.symbol} STOP $${c.to.toFixed(2)}, good till canceled`,
+    `if it fills at $${c.to.toFixed(2)}: $${(c.qty * (f.price - c.to)).toFixed(2)} below today's $${f.price.toFixed(2)}${costNote}`,
+    "a stop is an order, not a promise: a gap can fill below it",
+  ];
+  const left = +(f.shares - c.qty).toFixed(4);
+  if (!c.orderId && left > 0) out.push(`${left} fractional share${left === 1 ? "" : "s"} stay without a stop`);
+  return out;
+}
+
+/** What the user types to send a stop ticket: "STOP TSLA 352.10". */
+export const stopConfirm = (c: Pick<StopChange, "symbol" | "to">) => `STOP ${c.symbol.toUpperCase()} ${c.to.toFixed(2)}`;
+export const stopConfirmMatches = (typed: string, c: Pick<StopChange, "symbol" | "to">) => (typed ?? "").trim().toUpperCase().replace(/\$/g, "").replace(/\s+/g, " ") === stopConfirm(c);

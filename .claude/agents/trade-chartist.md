@@ -46,7 +46,7 @@ that lose money for this team. Apply them.
   cd trader/paper && python3 ../../.claude/skills/<skill>/<script>.py …
   ```
 
-  (Your working directory is the repo root. Never put `$(...)` or backticks in a command.)
+  (Your working directory is the repo root. Never put `$(...)`, `${...}` or backticks in a command, and never run `python3 -c` or `echo` an environment variable: background runs can't approve those. To look inside a saved output, use the Read tool.)
 
   Only when the lead's prompt says **LIVE MORNING** (the real-account morning batch), run from the
   repo root instead, whose `trader/` holds the user's REAL IBKR portfolio and rules:

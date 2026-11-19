@@ -36,6 +36,7 @@ export type OrderKind = "stop" | "stop-limit" | "trail" | "limit" | "other";
 /** An open order as read from IBKR (normalized; see lib/data/ibkr.ts openOrders). */
 export interface OpenOrder {
   orderId: string;
+  conid?: number; // IBKR's contract id, needed to change the order
   ticker: string;
   side: "BUY" | "SELL";
   kind: OrderKind;
@@ -372,6 +373,7 @@ export function parseGatewayOrder(o: Record<string, unknown>): OpenOrder | null 
   const limit = kind === "limit" || kind === "stop-limit" ? n(o.price) : undefined;
   return {
     orderId: String(o.orderId ?? ""),
+    ...(n(o.conid) ? { conid: n(o.conid) } : {}),
     ticker,
     side,
     kind,
