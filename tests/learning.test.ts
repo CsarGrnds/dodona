@@ -66,3 +66,19 @@ test("pending: a formed range still under its high, above VWAP; broken or weak o
   const early = pendingRange("X", base.slice(0, 2), { nowMs: Date.parse("2026-11-18T14:40:00Z") });
   assert.equal("why" in early && early.why, "the opening range hasn't formed yet");
 });
+
+test("pending: a stock under both its 20- and 50-day averages is a daily downtrend", async () => {
+  const { dailyTrend } = await import("../lib/pending");
+  const day = (i: number, close: number) => ({ time: `2026-0${1 + Math.floor(i / 28)}-${String(1 + (i % 28)).padStart(2, "0")}`, open: close, high: close, low: close, close, volume: 1 });
+  const falling = Array.from({ length: 60 }, (_, i) => day(i, 100 - i)); // 100 → 41
+  const down = dailyTrend(falling, "2026-11-19", 40);
+  assert.ok(down && "why" in down && down.why.startsWith("daily downtrend"));
+  const up = dailyTrend(falling.map((b, i) => ({ ...b, close: 41 + i })), "2026-11-19", 102);
+  assert.ok(up && "sma20" in up && up.sma20 > up.sma50);
+  // above the 50-day but under the 20-day: a pullback, not a downtrend (the chartist judges it)
+  const pull = dailyTrend(falling.map((b, i) => ({ ...b, close: i < 50 ? 41 + i : 95 })), "2026-11-19", 90);
+  assert.ok(pull && "sma20" in pull);
+  // today's own bar is never part of the averages, and too little history gives no verdict
+  assert.equal(dailyTrend(falling.slice(0, 49), "2026-11-19", 1), null);
+  assert.equal(dailyTrend(falling, "2026-01-01", 1), null);
+});

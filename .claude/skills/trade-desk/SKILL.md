@@ -38,6 +38,7 @@ Day trading loses most people money; a good paper week is not proof.
 
 | Subagent | Skill | Model | Job |
 |---|---|---|---|
+| `trade-screener` | Dodona's `npm run desk -- shortlist` + trader-news | Sonnet | Before the open: the day's shortlist, AVOIDs taken off |
 | `trade-scanner` | trader-scanner | Haiku | Today's setups, at most 5 candidates |
 | `trade-news` | trader-news | Sonnet | CLEAR / CAUTION / AVOID per ticker |
 | `trade-entry` | trader-entry | Haiku | Has the breakout triggered on a completed bar? |
@@ -131,7 +132,7 @@ All commands from the repo root. Every `npm run desk` command prints JSON.
 
 6. **Log each step** right after each specialist answers:
    ```bash
-   npm run desk -- log --agent <scanner|news|entry|exit|timemachine|analyst|budget|risk|lead> \
+   npm run desk -- log --agent <screener|scanner|news|entry|exit|timemachine|analyst|budget|risk|lead> \
      --title "<one line: the verdict>" --text "<the key numbers and why>" [--kind decision]
    ```
 
@@ -169,16 +170,22 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
    restarts a stale gateway when a login doesn't take) and wait for the user before going on.
    Best done before 9:30 AM New York, while the opening range forms.
 1. `npm run desk -- session start --trigger "LIVE MORNING: today's real-account batch"`, then
-   `npm run desk -- stage clear`.
+   `npm run desk -- stage clear`. Then `npm run -s desk -- shortlist show`: if `today` is false, call
+   `trade-screener` (LIVE MORNING) first to build today's shortlist, and log its report.
 2. Find ranges that have formed but NOT broken yet (the scanner skill only lists breakouts that
    already happened, too late for an order that waits at IBKR):
    ```bash
    npm run -s desk -- pending
    ```
-   It checks the whole market in seconds and returns the best few (`pending`): each with its range
-   high (`orHigh`, the trigger), range low, VWAP, relative volume and how far it is under the trigger.
-   Stocks the user holds and blocked tickers are already left out. Then `trade-news` on them; drop
-   AVOIDs. Log both.
+   It checks today's shortlist (`source` says so; the whole market only when there's none) and
+   returns the best few (`pending`): each with its range high (`orHigh`, the trigger), range low,
+   VWAP, relative volume and how far it is under the trigger. Stocks the user holds, blocked tickers
+   and daily downtrends (under both the 20- and 50-day averages, see `rejected`) are already left
+   out; `sma20`/`sma50` come with each one. An empty `pending` from the shortlist is an answer: log
+   "no shortlisted range is ready" and end (no news call); don't fall back to `--all`. Otherwise
+   `trade-news` on them, saying "shortlisted" so it shows only headlines new since the screener's
+   check. Drop every AVOID, and take it off the shortlist too (`npm run -s desk -- shortlist drop
+   --symbol X --why "AVOID: …"`) so later runs today never look at it again. Log both.
 3. For the best candidates, one at a time, at most the trades left today (`max_trades_per_day`):
    1. (No `trade-entry` here: `pending` already confirmed the range is formed and unbroken.)
    2. `trade-exit` with a plan-ahead entry at the range high: `exit.py plan --symbol <SYM> --entry
@@ -201,6 +208,16 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
    check. If PushNotification is available, notify the user with the same one line.
 
 Never run this from `/loop`. Dodona's own timer may start it at the user's "Batch times" (Settings → Broker → Prepare the batch by itself): it still only stages and checks, and it ends with the user approving the batch on the Desk.
+
+## SCREEN mode (`/trade-desk screen`): the day's shortlist, before the open
+
+Best between 8:00 and 9:30 AM New York (Dodona starts it by itself at 9:15 AM when "Prepare the batch
+by itself" is on). It only builds the list; it stages nothing.
+
+1. `npm run desk -- session start --trigger "SCREEN: today's shortlist"`
+2. Call `trade-screener` (with LIVE MORNING when real orders are on, i.e. `"broker": "ibkr"` in
+   `trader/config.json`). Log its report: kept, dropped by news and why, the best 5.
+3. End the session with a 1-2 sentence summary.
 
 ## REVIEW mode (`/trade-desk review`): the coach, after the close
 

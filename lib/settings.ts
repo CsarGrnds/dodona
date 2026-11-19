@@ -97,6 +97,7 @@ export const AGENT_MODELS = ["haiku", "sonnet", "opus", "inherit"] as const;
 export type AgentModel = (typeof AGENT_MODELS)[number];
 
 export const TEAM: Array<{ agent: string; label: string; job: string; suggested: AgentModel }> = [
+  { agent: "trade-screener", label: "Screener", job: "Pre-market shortlist, drops bad news", suggested: "sonnet" },
   { agent: "trade-scanner", label: "Scanner", job: "Runs the scan, lists candidates", suggested: "haiku" },
   { agent: "trade-news", label: "News", job: "Judges headlines and 8-Ks", suggested: "sonnet" },
   { agent: "trade-entry", label: "Entry", job: "Has the breakout triggered?", suggested: "haiku" },

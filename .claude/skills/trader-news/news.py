@@ -54,8 +54,10 @@ import xml.etree.ElementTree as ET
 
 YAHOO = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%s&region=US&lang=en-US"
 CHART = "https://%s.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=5m"
-SEC_FEED = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=%s&type=%s"
-            "&dateb=&owner=include&count=%d&output=atom")
+# SEC's JSON API: every recent filing of one company (form, time, 8-K items). The old
+# browse-edgar Atom feed stopped answering in 2026-11.
+SEC_SUBMISSIONS = "https://data.sec.gov/submissions/CIK%s.json"
+SEC_DOC = "https://www.sec.gov/Archives/edgar/data/%d/%s/%s"
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 PLACEHOLDER = "you@example.com"
 BROWSER_UA = "Mozilla/5.0 (compatible; day-trader-skill/2.0; +https://github.com/Jakeschincariol/day-trader-skill)"
@@ -257,36 +259,38 @@ def parse_rss(data, ticker):
     return out
 
 
-def parse_sec_atom(data, ticker):
-    """EDGAR company filings Atom -> items."""
+def parse_sec_json(data, ticker, forms=("8-K",), count=10):
+    """EDGAR submissions JSON (data.sec.gov) -> items: the latest `count` filings of `forms`."""
     try:
-        root = ET.fromstring(data)
-    except ET.ParseError as exc:
-        raise NewsError("SEC feed for %s is not valid XML: %s" % (ticker, exc))
-    company = ""
-    for el in root.iter():
-        if _local(el.tag) == "conformed-name":
-            company = (el.text or "").strip()
-            break
+        doc = json.loads(data.decode("utf-8") if isinstance(data, bytes) else data)
+        recent = doc["filings"]["recent"]
+        cik = int(doc.get("cik") or 0)
+    except (ValueError, KeyError, TypeError):
+        raise NewsError("SEC filings for %s are not usable" % ticker)
+    company = doc.get("name") or ticker
+
+    def col(key, i):
+        values = recent.get(key) or []
+        return values[i] if i < len(values) else ""
+
     out = []
-    for entry in root.iter():
-        if _local(entry.tag) != "entry":
+    for i, form in enumerate(recent.get("form") or []):
+        if form not in forms:
             continue
-        form = _text(entry, "filing-type")
-        acc = _text(entry, "accession-number")
-        items = re.findall(r"\d+\.\d+", _text(entry, "items-desc"))
-        labels = [ITEMS_8K.get(i, "item " + i) for i in items if i != "9.01"]
-        link = ""
-        for c in entry.iter():
-            if _local(c.tag) == "link":
-                link = c.get("href", "")
-        title = "%s filed a %s" % (company or ticker, form)
+        acc = col("accessionNumber", i)
+        items = re.findall(r"\d+\.\d+", col("items", i) or "")
+        labels = [ITEMS_8K.get(x, "item " + x) for x in items if x != "9.01"]
+        title = "%s filed a %s" % (company, form)
         if labels:
             title += ": " + ", ".join(labels)
+        doc_name = col("primaryDocument", i)
+        link = SEC_DOC % (cik, acc.replace("-", ""), doc_name) if cik and acc and doc_name else ""
         out.append({"id": "sec:" + acc, "source": "SEC EDGAR", "kind": "filing", "form": form,
-                    "ticker": ticker, "title": title, "summary": _text(entry, "form-name"),
+                    "ticker": ticker, "title": title, "summary": col("primaryDocDescription", i) or form,
                     "items": items, "important": bool(set(items) & IMPORTANT_ITEMS),
-                    "link": link, "time": parse_time(_text(entry, "updated"))})
+                    "link": link, "time": parse_time(col("acceptanceDateTime", i) or col("filingDate", i))})
+        if len(out) >= count:
+            break
     return out
 
 
@@ -400,13 +404,17 @@ def collect(fetcher, watch, state, sec=True, forms=("8-K",), count=10, errors=No
                 if ciks:
                     errors.append("no SEC CIK for %s" % t)
                 continue
-            for form in forms:
-                try:
-                    data = fetcher.get(SEC_FEED % (cik, form, count),
-                                       "sec-%s-%s.xml" % (form, cik), sec=True)
-                    items += parse_sec_atom(data, t)
-                except NewsError as exc:
-                    errors.append("SEC %s for %s: %s" % (form, t, exc))
+            try:
+                data = fetcher.get(SEC_SUBMISSIONS % cik, "sec-%s.json" % cik, sec=True)
+                items += parse_sec_json(data, t, forms=forms, count=count)
+            except NewsError as exc:
+                errors.append("SEC filings for %s: %s" % (t, exc))
+                # SEC isn't answering: don't wait on it once per ticker; the headlines still come through
+                if "no answer" in str(exc) or "could not reach" in str(exc):
+                    rest = [x for x in sorted(watch) if x > t and ciks.get(x)]
+                    if rest:
+                        errors.append("SEC didn't answer, so 8-Ks were not checked for %s" % " ".join(rest))
+                    break
     return items
 
 

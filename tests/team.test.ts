@@ -22,7 +22,7 @@ test("each specialist runs on a model sized to its job", async () => {
   const m = await teamModels();
   assert.deepEqual(
     Object.fromEntries(Object.entries(m).sort()),
-    { "trade-analyst": "sonnet", "trade-budget": "haiku", "trade-chartist": "sonnet", "trade-coach": "opus", "trade-entry": "haiku", "trade-exit": "haiku", "trade-news": "sonnet", "trade-risk": "haiku", "trade-scanner": "haiku", "trade-timemachine": "haiku" },
+    { "trade-analyst": "sonnet", "trade-budget": "haiku", "trade-chartist": "sonnet", "trade-coach": "opus", "trade-entry": "haiku", "trade-exit": "haiku", "trade-news": "sonnet", "trade-risk": "haiku", "trade-scanner": "haiku", "trade-screener": "sonnet", "trade-timemachine": "haiku" },
   );
 });
 

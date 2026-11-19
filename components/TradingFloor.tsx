@@ -19,6 +19,7 @@ const pts = (a: Array<{ x: number; y: number }>) => a.map((p) => `${p.x},${p.y}`
 interface Seat { label: string; i: number; j: number; shirt: string; hair: string; skin: string; w?: number; fem?: boolean }
 const SEATS: Record<string, Seat> = {
   lead: { label: "Lead trader", i: 4.3, j: 4.5, w: 2.2, shirt: "#7c6cf0", hair: "#2b1d14", skin: "#e0ac83" },
+  "trade-screener": { label: "Screener", i: 8.2, j: 9.7, shirt: "#4a9e8e", hair: "#6b4226", skin: "#f0c6a0", fem: true },
   "trade-scanner": { label: "Scanner", i: 1.2, j: 1.4, shirt: "#3aa0d8", hair: "#121212", skin: "#f1c7a3" },
   "trade-news": { label: "News", i: 3.6, j: 0.8, shirt: "#e0884a", hair: "#7a4a1e", skin: "#c58c5f" },
   "trade-chartist": { label: "Chartist", i: 6.1, j: 0.8, shirt: "#2fbf71", hair: "#c98a3a", skin: "#f3d2b5", fem: true },

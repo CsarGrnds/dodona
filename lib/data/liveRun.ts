@@ -14,7 +14,7 @@ import { closeSync, openSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { dueSlot, parseAutoTimes } from "../autoBatch";
-import { marketStatus } from "../clock";
+import { marketStatus, tradingDay } from "../clock";
 import { gatewayStatus, syncFromGateway } from "./ibkr";
 
 const dir = () => resolve(process.cwd(), "trader", "runs");
@@ -27,7 +27,7 @@ interface RunState {
   mode?: RunMode;
 }
 
-export type RunMode = "live" | "paper" | "review";
+export type RunMode = "live" | "paper" | "review" | "screen";
 
 export interface LiveRun {
   mode?: RunMode;
@@ -92,7 +92,7 @@ export async function startLiveRun(mode: RunMode = "live"): Promise<{ ok: boolea
     process.env.CLAUDE_BIN || "claude",
     [
       "-p",
-      mode === "live" ? "/trade-desk live" : mode === "review" ? "/trade-desk review" : "/trade-desk",
+      mode === "live" ? "/trade-desk live" : mode === "review" ? "/trade-desk review" : mode === "screen" ? "/trade-desk screen" : "/trade-desk",
       "--output-format",
       "stream-json",
       "--verbose",
@@ -200,6 +200,7 @@ export function notifyMac(title: string, text: string) {
   }
 }
 
+const SCREEN_AT = 9 * 60 + 15; // the pre-market shortlist run, New York
 const AUTO_DONE = (date: string) => join(dir(), `auto-${date}.json`);
 const readJsonFile = async (p: string) => JSON.parse(await readFile(p, "utf8").catch(() => "null"));
 
@@ -209,9 +210,18 @@ export async function autoBatchTick(now = new Date()): Promise<string> {
   const ny = nyNow(now);
   await notifyWhenReady(now);
   if (cfg.auto_batch !== true || cfg.ibkr_orders !== true || String(cfg.broker ?? "").toLowerCase() !== "ibkr") return "off";
-  if (ny.weekend || !marketStatus(now.getTime()).open) return "market closed";
   await mkdir(dir(), { recursive: true });
   const doneDoc = ((await readJsonFile(AUTO_DONE(ny.date))) ?? { slots: [] }) as { slots: string[] };
+  // Before the open (9:15-9:40 New York): the day's shortlist, once (trade-screener; stages nothing).
+  if (!ny.weekend && tradingDay(ny.date).ok && ny.minute >= SCREEN_AT && ny.minute < 9 * 60 + 40 && !doneDoc.slots.includes("screen")) {
+    const st = await state();
+    if (st && alive(st.pid)) return "a run is going";
+    doneDoc.slots.push("screen");
+    await writeFile(AUTO_DONE(ny.date), JSON.stringify(doneDoc));
+    const r = await startLiveRun("screen");
+    return r.ok ? "started screen" : `not started: ${r.error}`;
+  }
+  if (ny.weekend || !marketStatus(now.getTime()).open) return "market closed";
   const slot = dueSlot(parseAutoTimes(String(cfg.auto_batch_times ?? "")), ny.minute, doneDoc.slots);
   if (!slot) return "no slot due";
   const st = await state();
@@ -250,7 +260,7 @@ async function notifyWhenReady(now: Date) {
 }
 
 /** While Dodona runs, check every minute: the batch times, a batch to announce, the daily review. Safe to call often. */
-const TIMER_VERSION = 2; // bump when the tick changes, so a running Dodona swaps in the new one
+const TIMER_VERSION = 3; // bump when the tick changes, so a running Dodona swaps in the new one
 export function ensureReviewScheduler() {
   if (g.__dodonaReviewTimer && g.__dodonaTimerVersion === TIMER_VERSION) return;
   if (g.__dodonaReviewTimer) clearInterval(g.__dodonaReviewTimer);

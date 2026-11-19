@@ -10,6 +10,7 @@ export const TEAM_MODEL = "Claude Code trade team";
 
 const ROLE: Record<string, { label: string; icon: string; skill?: string }> = {
   lead: { label: "Lead trader", icon: "✦" },
+  "trade-screener": { label: "Screener", icon: "☰", skill: "trader-news" },
   "trade-scanner": { label: "Scanner", icon: "⌕", skill: "trader-scanner" },
   "trade-news": { label: "News", icon: "✉", skill: "trader-news" },
   "trade-entry": { label: "Entry", icon: "↗", skill: "trader-entry" },
