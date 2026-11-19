@@ -97,6 +97,7 @@ export default function Dashboard() {
           <Link className="btn ghost" href="/setups">Setups</Link>
           <Link className="btn ghost" href="/portfolio">Portfolio</Link>
           <Link className="btn ghost" href="/desk">Desk</Link>
+          <Link className="btn ghost" href="/agents">Agents</Link>
           <Link className="btn ghost" href="/status">Status</Link>
           <Link className="btn ghost" href="/settings">Settings</Link>
           <SearchBox onPick={add} />

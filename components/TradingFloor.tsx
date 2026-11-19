@@ -3,7 +3,8 @@
 // It replays a /trade-desk session from its Claude Code transcript as a conversation: the lead hands a
 // task to a specialist (a note flies across the floor), the specialist works at its screen and reports
 // back, each line in a speech bubble. Live sessions follow along. Messages run in a side panel; click
-// an agent to see only theirs. Original pixel art, read-only.
+// an agent to see only theirs; right-click one to inspect its profile (/agents). Original pixel art, read-only.
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Analysis } from "@/lib/analysis";
 import type { TeamStep, TeamTranscript } from "@/lib/data/transcripts";
@@ -17,7 +18,7 @@ const P = (i: number, j: number) => ({ x: OX + (i - j) * TW, y: OY + (i + j) * T
 const pts = (a: Array<{ x: number; y: number }>) => a.map((p) => `${p.x},${p.y}`).join(" ");
 
 interface Seat { label: string; i: number; j: number; shirt: string; hair: string; skin: string; w?: number; fem?: boolean }
-const SEATS: Record<string, Seat> = {
+export const SEATS: Record<string, Seat> = {
   lead: { label: "Lead trader", i: 4.3, j: 4.5, w: 2.2, shirt: "#7c6cf0", hair: "#2b1d14", skin: "#e0ac83" },
   "trade-screener": { label: "Screener", i: 8.2, j: 9.7, shirt: "#4a9e8e", hair: "#6b4226", skin: "#f0c6a0", fem: true },
   "trade-scanner": { label: "Scanner", i: 1.2, j: 1.4, shirt: "#3aa0d8", hair: "#121212", skin: "#f1c7a3" },
@@ -78,6 +79,8 @@ export function TradingFloor({ session }: { session?: string }) {
   const [play, setPlay] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [pick, setPick] = useState<string>(); // an agent clicked on the floor: only its messages
+  const [menu, setMenu] = useState<{ k: string; x: number; y: number }>(); // right-click on a desk
+  const router = useRouter();
   const logRef = useRef<HTMLOListElement>(null);
 
   useEffect(() => {
@@ -189,6 +192,17 @@ export function TradingFloor({ session }: { session?: string }) {
     }
   };
 
+  // the right-click menu closes on any click, scroll or Escape
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(undefined);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && close();
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", esc);
+    return () => { window.removeEventListener("click", close); window.removeEventListener("scroll", close, true); window.removeEventListener("keydown", esc); };
+  }, [menu]);
+
   if (err) return <div className="dk-empty">{err}</div>;
   if (!tx) return <div className="fl-wrap fl-loading" />;
 
@@ -219,6 +233,13 @@ export function TradingFloor({ session }: { session?: string }) {
   const upw = (p: { x: number; y: number }, d: number) => ({ x: p.x, y: p.y - d });
   return (
     <div className="fl-wrap">
+      {menu && (
+        <div className="fl-menu" role="menu" style={{ left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 110) }} onClick={(e) => e.stopPropagation()}>
+          <div className="fl-menu-h">{SEATS[menu.k].label}</div>
+          <button role="menuitem" autoFocus onClick={() => { setMenu(undefined); router.push(`/agents?agent=${menu.k}`); }}>Inspect profile…</button>
+          <button role="menuitem" onClick={() => { setMenu(undefined); choose(menu.k); }}>{pick === menu.k ? "Show everyone's messages" : "Show only their messages"}</button>
+        </div>
+      )}
       <div className="fl-main">
         <svg viewBox="76 -6 808 512" className="fl-svg" role="img" aria-label="The trade team on its trading floor">
           <defs>
@@ -391,6 +412,7 @@ export function TradingFloor({ session }: { session?: string }) {
               picked={pick === k}
               dim={!!pick && pick !== k && !(cur && involves(cur, pick) && (cur.from === k || cur.to === k))}
               onPick={() => choose(k)}
+              onMenu={(x, y) => setMenu({ k, x, y })}
             />
           ))}
 
@@ -477,7 +499,7 @@ const WAVES = ["3,22 10,18 17,20 24,12 31,15 38,9 45,11 55,6", "3,8 12,12 20,10 
 const arc = (a: { x: number; y: number }, b: { x: number; y: number }) => `M${a.x},${a.y - 34} Q${(a.x + b.x) / 2},${Math.min(a.y, b.y) - 110} ${b.x},${b.y - 34}`;
 const OUT = "#05070c"; // the dark outline every shape gets
 
-function Desk({ k, s, here, busy, talking, model, n, picked, dim, onPick }: { k: string; s: Seat; here: boolean; busy: boolean; talking: boolean; model?: string; n: number; picked: boolean; dim: boolean; onPick: () => void }) {
+function Desk({ k, s, here, busy, talking, model, n, picked, dim, onPick, onMenu }: { k: string; s: Seat; here: boolean; busy: boolean; talking: boolean; model?: string; n: number; picked: boolean; dim: boolean; onPick: () => void; onMenu: (x: number, y: number) => void }) {
   const w = s.w ?? 1.2;
   const h = 16;
   const up = (p: { x: number; y: number }, d = h) => ({ x: p.x, y: p.y - d });
@@ -502,7 +524,15 @@ function Desk({ k, s, here, busy, talking, model, n, picked, dim, onPick }: { k:
       aria-pressed={picked}
       aria-label={`${s.label}: ${n} message${n === 1 ? "" : "s"}. Show only theirs`}
       onClick={onPick}
-      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onPick())}
+      onContextMenu={(e) => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") (e.preventDefault(), onPick());
+        else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+          e.preventDefault();
+          const r = e.currentTarget.getBoundingClientRect();
+          onMenu(r.left + r.width / 2, r.top + r.height / 2);
+        }
+      }}
     >
       {/* soft shadow under the desk */}
       <ellipse cx={c.x} cy={c.y + 4} rx={w * 34 + 14} ry={w * 13 + 8} fill="url(#fl-r-shadow)" />
@@ -579,6 +609,33 @@ const CANDLES: Array<Array<[number, number, number, number, number]>> = [
   [[3, 6, 8, 5, 9], [6, 8, 7, 6, 10], [9, 7, 10, 6, 11], [12, 10, 12, 9, 13], [15, 12, 11, 10, 14], [18, 11, 13, 10, 14], [21, 13, 14, 12, 15]],
   [[3, 10, 9, 11, 8], [6, 9, 11, 8, 12], [9, 11, 8, 12, 7], [12, 8, 7, 9, 6], [15, 7, 9, 6, 10], [18, 9, 6, 10, 5], [21, 6, 4, 7, 3]],
 ];
+
+/**
+ * One agent's doll on its own, the same drawing as on the floor (for the Agents page). `active` gives the
+ * talking pose: headset, hop and a glow in the shirt colour.
+ */
+export function Doll({ agent, size = 72, active = false, title }: { agent: string; size?: number; active?: boolean; title?: string }) {
+  const s = SEATS[agent] ?? SEATS.lead;
+  return (
+    <svg className="doll" width={size} height={size * 1.4} viewBox="-24 -62 48 67" role="img" aria-label={title ?? s.label}>
+      <defs>
+        <linearGradient id="fl-g-suit" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#3d4865" />
+          <stop offset="1" stopColor="#1a2030" />
+        </linearGradient>
+        <linearGradient id="fl-g-suitside" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor="#323b55" />
+          <stop offset="1" stopColor="#151a27" />
+        </linearGradient>
+        <radialGradient id="fl-r-shadow">
+          <stop offset="0" stopColor="#000" stopOpacity=".6" />
+          <stop offset="1" stopColor="#000" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <Person x={0} y={0} s={s} active={active} away={false} />
+    </svg>
+  );
+}
 
 function Person({ x, y, s, active, away }: { x: number; y: number; s: Seat; active: boolean; away: boolean }) {
   const o = { stroke: OUT, strokeWidth: 0.9 } as const;
