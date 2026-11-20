@@ -1,8 +1,32 @@
 # Dodona
 
-Browser-based investment analytics with a **per-ticker agent** that follows each company and suggests **BUY / SELL / HOLD**, re-evaluating as new data arrives. Click a ticker for everything needed to decide: chart levels, setups and their track record, a trade plan sized to your Interactive Brokers account, Time Machine odds, news, SEC filings and earnings. **Today** prepares the trading day: whether each stop at IBKR should be raised, which holdings have no stop, earnings coming up, and which pullbacks are real discounts. The dashboard opens with your portfolio's top winners and losers and why it's up or down, and tracks Congress members' disclosed trades.
+Browser-based investment analytics and a supervised day-trading desk. A **per-ticker agent** follows each company and suggests **BUY / SELL / HOLD**, re-evaluating as new data arrives. Click a ticker for everything needed to decide: chart levels, setups and their track record, a trade plan sized to your Interactive Brokers account, Time Machine odds, news, SEC filings and earnings. **Today** prepares the trading day: whether each stop at IBKR should be raised (and a ticket to raise it), which holdings have no stop, earnings coming up, and which pullbacks are real discounts. The dashboard opens with your portfolio's top winners and losers and why it's up or down, and tracks Congress members' disclosed trades.
 
-> Decision support, not financial advice. Market data comes from Yahoo Finance (unofficial) with a Google Finance fallback and may be delayed or wrong.
+A **Claude Code trade team** (a lead and 11 specialists, each running a real `/trader-*` skill) screens the whole market before the open, plans opening-range breakouts, checks every order against your rules and stages a batch for IBKR that **you** approve. Dodona shows the team at work on a pixel-art trading floor, keeps every call it made, replays them after the close, and lets you read and edit each agent's profile.
+
+> Decision support, not financial advice. Market data comes from Yahoo Finance (unofficial) with a Google Finance fallback and may be delayed or wrong. Day trading loses most people money; the rules here keep each loss small, they don't make a trade win.
+
+## Features at a glance
+
+| Page | What you get |
+|---|---|
+| **Watchlist** (`/`) | Account value chart from IBKR, top winners and losers with why the portfolio moved, a card per ticker with its agent's call (auto-follow every 5–60 min, flip alerts), Congress trades |
+| **Ticker** (`/ticker/SYM`) | Chart with support/resistance and the plan, the agent's call, a ✓/!/✗ checklist, setups with track records, trade plan sized to your account, Time Machine odds, news and 8-Ks, six quarters of earnings |
+| **Today** (`/today`) | Every holding's rule stop vs the stop order at IBKR (Raise, Keep, Tight, No stop, Partial, Under cost), your "never sell at a loss" rule, **stop tickets** that raise or set a stop at IBKR on your click, earnings within 7 days, discounts with add plans, resting buy limits |
+| **Setups** (`/setups`) | Five daily swing setups and the opening-range breakout on your holdings and watchlist, each with its per-stock track record and confirmation checks |
+| **Portfolio** (`/portfolio`) | IBKR holdings, weights, P&L, a concentration warning, rule-engine calls per position; Refresh from IBKR |
+| **Desk** (`/desk`) | The paper desk (P&L, equity curve, calendar, journal), the **IBKR order batch** to approve, the team's run button and timer, **Team analysis** cards (each stock the team looked at, its chart, verdict, ticket and after-close replay), the **Trading floor** and Claude's session log |
+| **Agents** (`/agents`) | The trade team as a character-select row; open any agent to see its profile (model, tools, when it's called, full instructions) and edit it, with checks that keep the safety rules |
+| **Status** (`/status`) | A live health check of every connector and Claude Code skill, with the fix for anything broken |
+| **Settings** (`/settings`) | Every trading rule (`trader/config.json`), the broker switches, auto batch times, one-click approval, who drives the desk, each agent's model |
+
+What runs by itself while Dodona is open (all off until you turn them on in Settings, and none of it can place an order):
+
+| When (New York) | What |
+|---|---|
+| 9:15–9:40 AM, trading days | `/trade-desk screen`: the **pre-market shortlist** of the day's best 40 stocks, bad-news names removed |
+| Your batch times (default 9:47, 11:00, 13:00) | `/trade-desk live`: the team stages the IBKR batch and a Mac notification asks you to approve it |
+| 4:10 PM, weekdays with candidates | `/trade-desk review`: the coach replays every call on real bars and updates the playbook |
 
 ## Screenshots
 
@@ -44,7 +68,9 @@ Portfolio:                       /api/portfolio (trader/portfolio.json) · /api/
 Status:                          /api/status (live check of every connector)
 Desk:                            /api/desk · /api/desk/run · /api/desk/reset · /api/desk/live · /api/desk/team · /api/desk/analysis · /api/desk/chart/<file> (the paper desk, Claude's live session, the trade team's session and each stock it analyzed with its chart)
 IBKR orders:                     /api/ibkr/orders (GET the ticket, its gates and today's IBKR activity; POST preview, or place/answer from a click in Dodona only)
+Stop tickets:                    /api/ibkr/stop (GET one holding's stop ticket and its gates; POST place/answer from a click in Dodona only)
 Team run:                        /api/desk/prepare (GET the background team run's status; POST start/stop from a click in Dodona)
+Agents:                          /api/agents (GET the team's profiles; POST save one agent's profile from a click in Dodona, checked)
 Settings:                        /api/settings (GET the trading rules, team models and driver; POST to save, localhost only)
 Claude Code sessions:            /api/claude/sessions · /api/claude/sessions/<id> (this project's Claude Code sessions on this computer, localhost only)
 Today:                           /api/today (holdings + open IBKR orders + watchlist → stops, discounts, buy limits)
@@ -70,6 +96,8 @@ npm run dev                     # http://localhost:3000
 | `npm run sync:ibkr` | Turn the IBKR connector's saved output into `trader/portfolio.json` |
 | `npm run demo:portfolio` | Write a fictional portfolio at today's prices (`docs/demo/portfolio.json`) |
 | `npm run desk -- prep \| status \| book \| stop \| close \| log \| session start\|end \| driver \| stage add\|list\|drop\|done\|clear \| candidate \| review` | The paper desk from the command line, for the `/trade-desk` team (JSON out) |
+| `npm run desk -- shortlist build \| show \| drop --symbol SYM --why "…"` | Build today's pre-market shortlist from the whole market, show it, or take a name off |
+| `npm run desk -- pending [--all]` | Opening ranges formed but not broken yet, in today's shortlist (or the whole market with `--all`) |
 | `npm run -s chart -- SYM [--trigger P --stop S --target T]` | Draw a stock's chart (daily, 15-minute, 5-minute) as a PNG for the chartist, plus its key numbers (JSON) |
 | `npm run screenshots` | Capture the README screenshots from a running demo server (the `dodona-demo` launch config); it refuses to run against a real portfolio |
 
@@ -103,8 +131,14 @@ Check changes with real market data. `DODONA_MOCK=1 npm run dev` (synthetic data
 | `lib/status.ts`, `lib/data/status.ts`, `app/api/status/route.ts`, `app/status/page.tsx` | Status: live health check of every connector |
 | `lib/ibkrOrder.ts`, `lib/data/ibkrOrders.ts`, `app/api/ibkr/orders/route.ts`, `components/IbkrOrderPanel.tsx` | IBKR orders: trader-broker's gates for Interactive Brokers, the bracket translation, preview, placing on your click, today's orders and fills |
 | `lib/settings.ts`, `lib/data/settings.ts`, `lib/data/localOnly.ts`, `app/api/settings/route.ts`, `app/settings/page.tsx` | Settings: the trading rules, the desk's driver and the trade team's models, validated and saved locally |
-| `.claude/skills/trade-desk/`, `.claude/agents/trade-*.md`, `scripts/desk.ts`, `lib/data/paper.ts`, `lib/data/transcripts.ts`, `lib/data/localOnly.ts`, `app/api/desk/team/route.ts`, `app/api/claude/sessions/`, `components/TeamSessionView.tsx`, `lib/analysis.ts`, `lib/data/analysis.ts`, `components/TeamAnalysis.tsx`, `components/TradingFloor.tsx` | Trade team: the lead skill, 8 specialist subagents, the paper workspace and booking check, the live team view and any Claude Code session of this project, from its transcripts, and the Team analysis board (each stock analyzed, with its chart, verdict, ticket and replay) |
+| `.claude/skills/trade-desk/`, `.claude/agents/trade-*.md`, `scripts/desk.ts`, `lib/data/paper.ts`, `lib/data/transcripts.ts`, `lib/data/localOnly.ts`, `app/api/desk/team/route.ts`, `app/api/claude/sessions/`, `components/TeamSessionView.tsx`, `lib/analysis.ts`, `lib/data/analysis.ts`, `components/TeamAnalysis.tsx`, `components/TradingFloor.tsx` | Trade team: the lead skill, 11 specialist subagents, the paper workspace and booking check, the live team view and any Claude Code session of this project, from its transcripts, and the Team analysis board (each stock analyzed, with its chart, verdict, ticket and replay) |
 | `lib/desk.ts`, `lib/deskAgent.ts`, `lib/data/desk.ts`, `lib/data/deskRun.ts`, `lib/data/deskTools.ts`, `lib/data/deskLive.ts`, `lib/data/deskView.ts`, `app/api/desk/*`, `app/desk/page.tsx`, `components/DeskCharts.tsx`, `components/AgentSessionView.tsx` | Desk: Claude's paper trading desk: ledger, sizing, risk gate, fills from bars, the agent's tool loop and research tools, its live session, P&L history and charts |
+| `lib/shortlist.ts`, `lib/data/shortlist.ts` | The pre-market shortlist: daily-chart rules (pure) and the whole-market build, `trader/shortlist.json` |
+| `lib/pending.ts`, `lib/data/pending.ts` | Opening ranges formed but not broken, the daily-downtrend filter, the two-stage market scan |
+| `lib/autoBatch.ts`, `lib/data/liveRun.ts`, `app/api/desk/prepare/route.ts`, `components/TeamRun.tsx` | Background team runs (`claude -p`): live batch, paper cycle, review and screen modes, their allow lists and the timer |
+| `lib/learning.ts`, `scripts/chart.ts`, `lib/chart.ts` | The daily review (replays every candidate) and the chartist's PNG charts |
+| `lib/agentProfile.ts`, `lib/data/agentProfiles.ts`, `app/api/agents/route.ts`, `app/agents/page.tsx` | Agents: the team's profiles, the save checks and the character-select page |
+| `components/StopTicket.tsx`, `app/api/ibkr/stop/route.ts` | Today's stop tickets: raise or set one sell stop at IBKR on your click |
 | `tests/` | Node test runner suites (`npm test`) |
 
 ## Ticker page: everything for one stock
@@ -124,7 +158,7 @@ Click any ticker to get the whole picture in one place, with each day-trader ski
 | News & filings | Headlines tagged (earnings, analyst, legal, deal, risk…) and recent SEC filings with 8-K items in plain words | `/trader-news` |
 | Earnings | Last 6 quarters from SEC XBRL facts: revenue, margins, net income, EPS, each vs a year earlier, plus TTM and what changed | `/trader-analyst` |
 
-The checklist and Time Machine answer "what if I bought here?" even when the call isn't BUY. SEC panels need `SEC_USER_AGENT` in `.env.local` (SEC requires a name and email). Congress trades live on the dashboard (below). Not ported: `/trader-broker` (Dodona never places orders).
+The checklist and Time Machine answer "what if I bought here?" even when the call isn't BUY. SEC panels need `SEC_USER_AGENT` in `.env.local` (SEC requires a name and email). Congress trades live on the dashboard (below). Not ported: `/trader-broker`; Dodona sends orders only through its own IBKR panel and stop tickets, on your approval (below).
 
 ## Setups: swing + intraday
 
@@ -161,7 +195,16 @@ Below the chart are your IBKR holdings at live Yahoo prices: the top 5 winners a
 - **Discounts.** Uptrend (above the 200-day, 50-day above it) plus 2 of: within 1 ATR of a strong support, RSI ≤ 40 or back at the 50-day, an oversold bounce or a reclaimed 20-day average. In a downtrend a lower price is **Falling**, not a discount. Discounts and "watch" names get an add plan (shares, stop under the support, max loss) from your Trade plan settings and the real account.
 - **Buy limits.** Each resting BUY limit: how far the price must fall (in % and ATRs), whether it sits on a support, a support above it that may hold first, or a downtrend.
 
-Without the gateway logged in, Dodona can't see your stops (say "refresh IBKR"). Dodona never places, moves or cancels an order: make the change in IBKR.
+Without the gateway logged in, Dodona can't see your stops (say "refresh IBKR").
+
+**Stop tickets.** When IBKR orders are on (Settings → Broker), a holding whose stop should be **Raised** (or that has **No stop**, or sits **Under cost**) gets a button: *Raise to $352.10 at IBKR…* or *Set $352.10 at IBKR…*. It opens a plain ticket: the order it replaces, the new stop, the shares, the loss at the stop and every gate. You can change the price. It's sent only when you type the confirmation (`STOP TSLA 352.10`) and click, or with **One-click approval** on, one click. The gates (`stopTicket` in `lib/data/ibkrOrders.ts`):
+
+- one sell STOP per holding, raising the existing order or setting a new one; never down, never at or above the price;
+- never under your cost while **Never sell at a loss** is on, never more shares than you hold;
+- paper accounts (DU…) only while `paper` is true; never the same change twice;
+- IBKR's own questions come back to you one by one; nothing is auto-confirmed.
+
+Each change is logged as `stop-changed` in `trader/state/broker.json`, so trader-risk doesn't count it as a trade. Dodona never cancels a stop or moves one down; do that in IBKR.
 
 ## Status: are the connectors working?
 
@@ -205,7 +248,7 @@ Each run (**Run desk now**, or **Auto every 5 min** while the page is open):
 | Tab | What's on it |
 |---|---|
 | **Today · analysis & tickets** | The IBKR order tickets (when real orders are on), then **Team analysis**: one card per stock the trade team looked at, grouped by run. Each run shows the market mode (aggressive, normal or defensive) and a ◫ Market button for the SPY chart the team read. Each card shows a ◫ Chart button that opens the chart the chartist drew and read as an image, its 1–5 chart score, the trigger, stop and target with their distance and reward:risk, the verdict (take or skip) and why, the IBKR ticket it became (staged, sent, refused, canceled) and, after the close, the coach's replay on the real bars (hit the target or the stop, sold at the close, never triggered; right call or missed winner). Pick an earlier day from the list, or filter to taken, skipped or tickets. It reads `trader/learning/candidates.jsonl`, `trader/charts/`, `trader/learning/reviews/`, `trader/staged.json` and `trader/state/broker.json` through `/api/desk/analysis` and `/api/desk/chart/<file>` (both local only, `lib/data/analysis.ts`, `lib/analysis.ts`, `components/TeamAnalysis.tsx`). |
-| **Team floor** | The **Trading floor**: the trade team drawn as detailed, shaded pixel-art traders (men and women in suits, with ties or blouses and name tags in each agent's color) at multi-screen desks on an isometric trading floor, with three big wall screens showing the real charts that session read (SPY, then its two strongest stocks, takes first, with chart score and verdict), an LED tape scrolling the stocks the session analyzed (trigger → target, chart score, take or skip; read from `/api/desk/analysis` for the session's time window), night-city windows and potted plants in the corners; the lead sits in the middle at a four-screen desk. Messages run in a side panel next to it (stacked under it on a phone), the current one highlighted and the ones still to come dimmed. It replays the session picked below as a conversation: the lead hands a task to a specialist (a note flies across the floor), the specialist works at its screen and reports back, each line in a speech bubble, with play, pause, a scrubber and 1×/2×/4× speed. It opens paused on the newest session's latest message; a live session plays as it happens. Agents not in that session doze at their desks. A badge over each agent counts its messages. **Click an agent** (or a name in the log) to see only its messages: the others dim, playback steps through just its lines, and a card shows its model, model calls and estimated cost. Click a message to jump the floor to that moment; **Show everyone** clears the filter. It reads `/api/desk/team` (`components/TradingFloor.tsx`). Below it, Claude's session |
+| **Team floor** | The **Trading floor**: the trade team drawn as detailed, shaded pixel-art traders (men and women in suits, with ties or blouses and name tags in each agent's color) at multi-screen desks on an isometric trading floor, with three big wall screens showing the real charts that session read (SPY, then its two strongest stocks, takes first, with chart score and verdict), an LED tape scrolling the stocks the session analyzed (trigger → target, chart score, take or skip; read from `/api/desk/analysis` for the session's time window), night-city windows and potted plants in the corners; the lead sits in the middle at a four-screen desk. Messages run in a side panel next to it (stacked under it on a phone), the current one highlighted and the ones still to come dimmed. It replays the session picked below as a conversation: the lead hands a task to a specialist (a note flies across the floor), the specialist works at its screen and reports back, each line in a speech bubble, with play, pause, a scrubber and 1×/2×/4× speed. It opens paused on the newest session's latest message; a live session plays as it happens. Agents not in that session doze at their desks. A badge over each agent counts its messages. **Click an agent** (or a name in the log) to see only its messages: the others dim, playback steps through just its lines, and a card shows its model, model calls and estimated cost. Click a message to jump the floor to that moment; **Show everyone** clears the filter. **Right-click an agent** (or press the menu key on it) for **Inspect profile…**, which opens it on the Agents page. The Screener sits at the front of the room. It reads `/api/desk/team` (`components/TradingFloor.tsx`). Below it, Claude's session |
 | **Positions** | Open paper positions on a stop-to-target track, Claude's latest read and the last run |
 | **Performance** | Stat tiles, the equity curve and daily P&L, the calendar, how trades ended, results by setup and by who traded, and the trade history |
 | **Journal & rules** | Every buy, sell, skip and blocked trade with the reason, your rules and Reset paper account |
@@ -222,7 +265,7 @@ The dashboard's **Congress trades** card reads the House Clerk's public STOCK Ac
 
 ## Portfolio (Interactive Brokers)
 
-Two ways to load your positions, both read-only (Dodona never places orders):
+Two ways to load your positions, both read-only:
 
 **From Dodona: the "Refresh from IBKR" button** (Portfolio page, and on stale trade plans) reads IBKR's Client Portal Gateway, IBKR's own small Java app that serves its Web API on this machine:
 
@@ -271,6 +314,7 @@ Dodona's own skills, in the same folder:
 - **Broker:** Interactive Brokers or Alpaca, and whether Dodona may send orders to IBKR (see below).
 - **Who makes the desk's entries:** the Claude Code trade team or Dodona's own desk.
 - **Trade team models:** the model each specialist runs on (the `model:` line in `.claude/agents/trade-*.md`).
+- **Automation:** prepare the IBKR batch by itself at your batch times (this also starts the 9:15 AM screen run), and **One-click approval** (one click on a ticket whose label names the orders, cost and max loss, instead of typing the confirmation). Both are yours to turn on; Claude never does.
 
 Values are checked as you type, across fields too (a day's loss limit can't be under one trade's, entries end before the flat-by time). Nothing is silently replaced. Saving keeps every other key in the file, leaves the previous version in `trader/config.prev.json`, and updates the trade team's paper workspace. The safety switches (paper, margin, short selling, options) are shown but can only be changed by you, in the file. `/api/settings` answers only localhost, and its save refuses requests from other websites.
 
@@ -289,13 +333,13 @@ The team learns from every candidate it looks at, taken or skipped, without wait
 
 Real trades work like this: **the team prepares, you approve once, IBKR waits for the breakout.**
 
-1. **9:46 AM–3 PM New York (best right after 9:46): click Run desk now on the Desk** (it reads "prepare IBKR batch" when real orders are on, and stays greyed out outside that window), or type `/trade-desk live` in Claude Code. The team finds candidates with `npm run desk -- pending` (`lib/pending.ts`, `lib/data/pending.ts`): opening ranges that have **formed but not broken yet**, across the whole market in seconds (Yahoo's batch feed for all ~5,900 stocks, then full 5-minute bars for the 60 most traded). It keeps those within 1.5% under the range high, above VWAP and in the upper half of the range, and at least 1.5% wide (a narrower range can't pay its fees on a small account). It ranks them by relative volume and leaves out stocks you hold. Plans put the stop at the range's low, below its noise. The scanner skill only lists breakouts that already happened, too late for a buy-stop. The team runs from the repo root against your real portfolio and rules. Entry, Exit plan and Time Machine plan each one ahead, with the range high as the trigger. Budget sizes it, and `npm run desk -- stage add` stages it as a **buy-stop**. Then `stage done` writes the batch to `trader/orders.json`, and trader-risk checks it all together against your daily loss limit.
+1. **9:46 AM–3 PM New York (best right after 9:46): click Run desk now on the Desk** (it reads "prepare IBKR batch" when real orders are on, and stays greyed out outside that window), or type `/trade-desk live` in Claude Code. The team finds candidates with `npm run desk -- pending` (`lib/pending.ts`, `lib/data/pending.ts`): opening ranges that have **formed but not broken yet**, in **today's pre-market shortlist** (below; `--all` scans the whole market instead). It reads Yahoo's batch feed for every name, then full 5-minute bars for the survivors. It keeps those within 1.5% under the range high, above VWAP and in the upper half of the range, and at least 1.5% wide (a narrower range can't pay its fees on a small account). It drops stocks in a **daily downtrend** (under both their 20- and 50-day averages), ranks the rest by relative volume and leaves out stocks you hold. When nothing in the shortlist has a range ready, the run logs that and ends. Plans put the stop at the range's low, below its noise. The scanner skill only lists breakouts that already happened, too late for a buy-stop. The team runs from the repo root against your real portfolio and rules. Entry, Exit plan and Time Machine plan each one ahead, with the range high as the trigger. Budget sizes it, and `npm run desk -- stage add` stages it as a **buy-stop**. Then `stage done` writes the batch to `trader/orders.json`, and trader-risk checks it all together against your daily loss limit.
 2. **You approve it once**, on the Desk's **IBKR orders** panel. It shows every ticket, their total risk, and IBKR's preview of each (cost, commission, warnings; it places nothing). You type the batch (`8 TSLA, 5 F`) and click **Place**.
 3. **IBKR does the waiting.** Each order sits at IBKR and buys only if its price trades at the trigger, with no delay. Its stop-loss and take-profit are attached, and a sell at the close (MOC) keeps day trades from staying open overnight. Untriggered orders end at the close, and **Cancel unfilled** drops them sooner; filled positions keep their stop and target.
 
 The button starts the team as a background Claude Code session (`claude -p "/trade-desk live"`, `lib/data/liveRun.ts`, `POST /api/desk/prepare`). The session uses your Claude plan, shows live in "Claude's session", and its latest step and final answer show under the button, with a Stop button. It may only run the desk and gateway-status `npm` commands, the skill scripts, and read files and start subagents. Editing files, the web, `curl` and `git` are blocked, and it can't place, change or cancel an order. When the team drives the desk and real orders are off, the same button runs one paper cycle (`/trade-desk`) instead. "Manage paper positions every 5 min" only runs the paper desk's stops, targets and close.
 
-**By itself during the day.** Turn on Settings → Broker → **Prepare the batch by itself** and set **Batch times** (New York, between 09:46 and 15:00; default `09:47, 11:00, 13:00`). While Dodona runs, its timer (`lib/autoBatch.ts`, `autoBatchTick` in `lib/data/liveRun.ts`) starts `/trade-desk live` at each time. It only runs on a weekday with the market open, the gateway logged in, no team run going and no batch already waiting. A time a few minutes late still runs, and each runs once a day. When a batch is ready, from these runs or your own clicks, a **notification appears on this Mac** saying approve within 15 minutes. If the gateway is logged out at a batch time, the notification says so instead. Nothing is ever placed without your typed confirmation and click.
+**By itself during the day.** Turn on Settings → Broker → **Prepare the batch by itself** and set **Batch times** (New York, between 09:46 and 15:00; default `09:47, 11:00, 13:00`). While Dodona runs, its timer (`lib/autoBatch.ts`, `autoBatchTick` in `lib/data/liveRun.ts`) starts `/trade-desk live` at each time. It only runs on a weekday with the market open, the gateway logged in, no team run going and no batch already waiting. A time a few minutes late still runs, and each runs once a day. When a batch is ready, from these runs or your own clicks, a **notification appears on this Mac** saying approve within 15 minutes. If the gateway is logged out at a batch time, the notification says so instead. Nothing is ever placed without your approval in Dodona.
 
 Every gate, every time:
 
@@ -305,17 +349,53 @@ Every gate, every time:
 4. **Never more than your budget:** the batch's total cost, plus anything placed earlier today, must fit in your budget minus the cash buffer (with $200 and 20%: $160). trader-risk checks the buffer against your whole IBKR account, so Dodona checks the budget itself.
 4. **Never a stock you already hold**, so a day trade's sell can't touch shares you keep. On a cash account, IBKR also refuses to sell shares you don't have.
 5. **Fees at most 25% of the risk** by default, or your own limit (Settings → Risk → **Max fees vs risk**). IBKR's fixed pricing charges at least $1.00 each way, so at 25% a trade risking $3.90 is refused (about $2 in fees). With a small budget, raising the limit lets trades through, but the fees then eat most of a win and nearly double a loss; IBKR's tiered pricing ($0.35 minimum) cuts them by about two thirds.
-6. **Your yes:** only a typed confirmation and a click on Dodona's page can place orders. Scripts, other websites and Claude are refused. Nothing scheduled ever places one.
+6. **Your yes:** only your approval on Dodona's page can place orders: type the confirmation (like `8 TSLA, 5 F`) and click, or, with Settings → Broker → **One-click approval** on, one click on **Approve & place**, whose label names the orders, their cost and their max loss. Every other gate here still applies, and IBKR's own questions still come to you. Scripts, other websites and Claude are refused. Nothing scheduled ever places one.
 7. **IBKR's own questions** (market data warnings, price caps…) come back to you to confirm or skip, one by one.
 
-Each step is logged to `trader/state/broker.json` in `/trader-broker`'s format, so `/trader-risk` counts what was placed against your daily limits. A sent batch's `orders.json` is renamed so it can't be sent twice. The panel also shows today's working orders and fills at IBKR (read-only). Not yet: moving a live stop up from the panel.
+Each step is logged to `trader/state/broker.json` in `/trader-broker`'s format, so `/trader-risk` counts what was placed against your daily limits. A sent batch's `orders.json` is renamed so it can't be sent twice. The panel also shows today's working orders and fills at IBKR (read-only). To raise a live stop, use the stop tickets on **Today**.
+
+## Pre-market shortlist: the best names before the bell
+
+Before the open, `trade-screener` decides which stocks the live runs may look at today. `npm run desk -- shortlist build` (`lib/shortlist.ts`, `lib/data/shortlist.ts`) screens every stock in `trader/universe.txt` (~5,900) on **completed** daily closes (today's bar is never used), from Yahoo's daily batch feed, 20 symbols a request, in about a minute. A stock is kept when it has:
+
+| Rule | Why |
+|---|---|
+| 50+ sessions of history | Enough bars for the averages |
+| Price $5 or more, and one share fits the account | No penny stocks; a share you can't buy is no use |
+| $10M+ traded a day | Tight spreads, fills near the trigger |
+| Close > 20-day average > 50-day average | A daily uptrend: breakouts against the trend fail more |
+| No more than 8% above its 20-day average | Not stretched; chasing a spike has poor reward:risk |
+| An average daily move of 1.2%+ | Moves enough to pay IBKR's fees |
+| A 20-day return better than SPY's | Leaders, not laggards |
+
+It ranks the passing names by strength against SPY (then dollar volume), keeps the **best 40** in `trader/shortlist.json` and counts why the rest were left out. Then the screener checks the news on the top 15 in one `news.py` call (72 hours, SEC 8-Ks included) and takes off every AVOID with `shortlist drop` (earnings today or tomorrow, an offering, a halt, a deal that pins the price). It may only **take names off**, never add one or loosen a rule.
+
+Dodona starts `/trade-desk screen` by itself between 9:15 and 9:40 AM New York on trading days when auto batches are on, or type `/trade-desk screen` in Claude Code. Later live runs read only headlines that are new since the screener (`news.py` remembers what it showed), and an AVOID found during the day comes off the shortlist for the rest of the day. If no shortlist exists for today, the first live run builds one.
+
+## Agents: the team's profiles
+
+**/agents** shows the trade team the way a game shows its characters: a row of cards with the same pixel-art doll each agent has on the floor, standing on a stage lit in its colour, with its job and model. Pick one (or right-click it on the floor → **Inspect profile…**) and it steps into a spotlight, wearing its headset, with a class badge (`HAIKU CLASS`, `SONNET CLASS`, `OPUS CLASS`) and its profile:
+
+- **Model** (change it in Settings), **tools**, and **when the lead calls it** (the profile's description);
+- the **full instructions** it follows: its `.claude/agents/trade-*.md` file.
+
+**Edit** turns the instructions into an editor (⌘S saves, a warning if you leave with unsaved changes). The team uses the new version from its next run. Every save is checked on the server (`checkProfile` in `lib/agentProfile.ts`):
+
+- the frontmatter must parse and keep the agent's **name** (Claude Code finds the agent by it);
+- the **model** must be one Settings knows (haiku, sonnet, opus, inherit);
+- **tools** only from Bash, Read, Glob, Grep (the Coach also Edit and Write, for the playbook); nothing that reaches the web;
+- the **"NEVER AN ORDER" ground rule stays word for word**;
+- under 64k characters, and refused if Settings or Claude Code changed the file since you opened it.
+
+The previous version is kept in `trader/agent-undo/<agent>.md`. Saves are accepted only from a click in Dodona's own page on this computer (`/api/agents`). The **Lead trader** is in the row too, read-only: its profile is the `/trade-desk` skill, which holds the team's order rules, so change it in Claude Code.
 
 ## Trade team: Claude Code runs the real skills, Dodona shows it
 
-`/trade-desk` makes Claude Code the **lead trader** of a paper day-trading team. It sends the work to eight specialist subagents (`.claude/agents/trade-*.md`), each using one real skill, and books on Dodona's paper desk only what trader-risk passes:
+`/trade-desk` makes Claude Code the **lead trader** of a paper day-trading team. It sends the work to eleven specialist subagents (`.claude/agents/trade-*.md`), each using one real skill or Dodona script, and books on Dodona's paper desk only what trader-risk passes (in live mode it stages the IBKR batch instead; see above):
 
 | Subagent | Skill | Model | Job |
 |---|---|---|---|
+| `trade-screener` | `npm run desk -- shortlist`, `/trader-news` | Sonnet | Before the open: the day's best 40 stocks, bad-news names taken off |
 | `trade-scanner` | `/trader-scanner` | Haiku | Today's setups, at most 5 candidates |
 | `trade-news` | `/trader-news` | Sonnet | CLEAR / CAUTION / AVOID per ticker |
 | `trade-entry` | `/trader-entry` | Haiku | Has the breakout triggered on a completed bar? |
@@ -324,8 +404,10 @@ Each step is logged to `trader/state/broker.json` in `/trader-broker`'s format, 
 | `trade-analyst` | `/trader-analyst` | Sonnet | Earnings trend (needs `SEC_USER_AGENT`) |
 | `trade-budget` | `/trader-budget` | Haiku | Shares inside your rules, one bracket order |
 | `trade-risk` | `/trader-risk` | Haiku | PASS or BLOCK: the last word |
+| `trade-chartist` | `npm run chart` | Sonnet | Reads the real charts as images: a 1–5 chart score |
+| `trade-coach` | `npm run desk -- review` | Opus | After the close: grades every call and writes the playbook |
 
-**Each agent on the right model.** The lead runs on your Claude Code session's model (Opus) and makes every call. The six specialists that run a script and report its numbers use Haiku; News and Analyst, which judge headlines and earnings, use Sonnet. Change one on the Settings page (or the `model:` line in its `.claude/agents/trade-*.md`). The Desk page shows each agent's model, tokens and estimated cost per session.
+**Each agent on the right model.** The lead runs on your Claude Code session's model (Opus) and makes every call. The specialists that run a script and report its numbers use Haiku; Screener, News, Analyst and Chartist, which judge headlines, earnings and charts, use Sonnet; the Coach, who reasons over every day's results, uses Opus. Change one on the Settings page (or the `model:` line in its `.claude/agents/trade-*.md`), and read or edit everything else an agent is told on the **Agents** page. The Desk page shows each agent's model, tokens and estimated cost per session.
 
 How it stays paper and safe:
 
@@ -336,7 +418,7 @@ How it stays paper and safe:
 
 `npm run desk` (`scripts/desk.ts`) is the team's interface to the paper desk: `prep`, `status`, `book`, `stop`, `close`, `session start|end`, `log`, `driver team|auto`. Each prints JSON.
 
-**What Dodona shows.** On `/desk`, the **Claude's session** panel shows each team session live (polled every 3 s) with the roster of the lead and the eight specialists (click one to see only its work). Each step comes from two sources:
+**What Dodona shows.** On `/desk`, the **Claude's session** panel shows each team session live (polled every 3 s) with the roster of the lead and the eleven specialists (click one to see only its work). Each step comes from two sources:
 
 - **Verdicts** the team logs with `npm run desk -- log`.
 - **Everything behind them**, read from this machine's Claude Code transcripts (`~/.claude/projects/<this project>/`): the lead's reasoning, each subagent it sent out and its report, and every skill run with its command. Turn on "Every command output" to see the raw output too.
@@ -347,11 +429,22 @@ Claude Code's transcript format isn't documented, so the reader skips anything i
 
 Run it all day with `/loop 15m /trade-desk` between 9:45 AM and 3:30 PM New York time. It uses your Claude plan's usage. Running the same team through the Claude Agent SDK instead would be billed per token. With every agent on Opus 5.5 a cycle was roughly $0.60–1.00 (about $15–25 a day at one cycle every 15 minutes); with the specialists on Haiku and Sonnet most of a cycle's tokens cost a fraction of that, and the lead's Opus turns are the bulk of it. The team view's cost estimate per session shows the real split.
 
+## Safety: who can do what
+
+| | Can | Can't |
+|---|---|---|
+| **You** | Turn on IBKR orders, auto batches and one-click approval; approve a batch or a stop ticket in Dodona; turn `paper` off, by hand, in `trader/config.json` | — |
+| **Dodona's timer** | Start the screen, live and review runs at their times; send a Mac notification | Place, change or cancel an order |
+| **The trade team** (Claude Code) | Run the skill scripts and the desk's `npm` commands, read files, stage a batch, book **paper** trades that trader-risk passed, take names off the shortlist, write the playbook (Coach only) | Call a broker or `/trader-broker`, call `/api/ibkr/orders` or `/api/ibkr/stop`, edit code or settings, reach the web, `curl`, `git`, add a name to the shortlist, loosen a rule |
+| **The Agents page** | Edit a specialist's instructions, tools within the allowed set, and model | Remove the "NEVER AN ORDER" rule, add web or write tools, rename an agent, edit the lead's skill |
+| **Other websites, scripts, other devices** | — | Anything that changes a file or places an order: those routes answer only Dodona's own page on localhost |
+
+`lib/data/ibkrOrders.ts` is the only code that can send an order, and every gate in **IBKR orders** and **Stop tickets** above applies each time. IBKR's own questions always come back to you. Your data (`trader/`, `.env.local`) stays on this machine and out of git.
+
 ## Roadmap ideas
 
 - Server-side scheduler (Cloud Run job / cron) so agents follow tickers even with the browser closed, plus a DB (Postgres/Firestore) for shared history
-- Market-wide scan (~5,900 symbols) on the Setups page, like `/trader-scanner daily`
+- The pre-market shortlist on the Setups page, so you can browse it yourself
 - Earnings-calendar and ex-dividend alerts; SEC filings and reported quarters in the agent context
 - Congress trades for one stock on its ticker page; Senate reports
-- Orders through the IBKR gateway (e.g. "raise this stop" from Today), each one shown as a ticket and placed only on your explicit yes
-- Let the trade team trade the IBKR paper account through the gateway, each order still yours to approve
+- A screenshot set for the Desk, Team floor and Agents pages from the demo portfolio

@@ -48,3 +48,49 @@ export function nextAutoRun(nowMs: number, times: string[]): { at: number; time:
 }
 
 const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+/** The 9:35 AM New York text: where the day stands, 5 minutes into the session. */
+export interface OpenNoteInput {
+  date: string; // today, New York
+  gateway: "ready" | "login" | "down" | string;
+  shortlist?: { date?: string; kept?: Array<{ symbol: string }>; dropped?: Array<{ symbol: string }> } | null;
+  times: string[]; // the batch times, "HH:MM" New York
+  nowMinute: number;
+}
+const ampm = (t: string) => {
+  const h = Number(t.slice(0, 2));
+  return `${h % 12 || 12}:${t.slice(3)} ${h < 12 ? "AM" : "PM"}`;
+};
+export function openNote(x: OpenNoteInput): string {
+  const lines: string[] = [];
+  if (x.gateway !== "ready") lines.push("IBKR gateway is LOGGED OUT: log in at https://localhost:5001 on your Mac, or no batch can run.");
+  const sl = x.shortlist?.date === x.date ? x.shortlist : undefined;
+  if (!sl) lines.push("No shortlist for today yet: the 9:15 screen hasn't finished.");
+  else {
+    const kept = (sl.kept ?? []).map((k) => k.symbol);
+    const top = kept.slice(0, 6).join(", ");
+    const drop = (sl.dropped ?? []).map((d) => d.symbol);
+    lines.push(`Shortlist: ${kept.length} names${top ? ` (${top}${kept.length > 6 ? ", …" : ""})` : ""}${drop.length ? `, ${drop.join(", ")} dropped on news` : ""}.`);
+  }
+  const next = x.times.find((t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3)) > x.nowMinute);
+  lines.push(next ? `First batch check at ${ampm(next)} New York. If a trade passes risk you'll get a text: approve it on your Mac within 15 minutes.` : "No batch times left today.");
+  return lines.join(" ");
+}
+
+/** The text after each batch check (or the 9:15 screen) finishes: its answer, in plain words, cut short. */
+export function runNote(result: string | undefined, error?: string, max = 700): string {
+  if (error) return `It failed: ${plain(error).slice(0, 300)}`;
+  const body = plain(result ?? "");
+  if (!body) return "It finished with no report. Look at the Desk.";
+  return body.length > max ? body.slice(0, max - 1).replace(/\s+\S*$/, "") + "…" : body;
+}
+function plain(md: string): string {
+  return md
+    .replace(/^\|.*\|$/gm, "") // tables
+    .replace(/\*\*|__|`/g, "")
+    .replace(/^\s*[-*]\s+/gm, "")
+    .replace(/^#+\s*/gm, "")
+    .replace(/\n{2,}/g, "\n")
+    .replace(/\s*\n\s*/g, " ")
+    .trim();
+}

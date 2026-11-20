@@ -97,6 +97,7 @@ export default function PortfolioPage() {
           <Link className="btn ghost" href="/today">Today</Link>
           <Link className="btn ghost" href="/setups">Setups</Link>
           <Link className="btn ghost" href="/desk">Desk</Link>
+          <Link className="btn ghost" href="/agents">Agents</Link>
           <Link className="btn ghost" href="/status">Status</Link>
           <Link className="btn ghost" href="/settings">Settings</Link>
           {pf && (

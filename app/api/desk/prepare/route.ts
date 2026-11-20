@@ -23,7 +23,7 @@ export async function POST(req: Request) {
     // the server decides, from the settings, not the page (a stale page once started a paper cycle)
     const cfg = await readFile(configPath(), "utf8").then(JSON.parse).catch(() => ({}) as Record<string, unknown>);
     const realOrders = cfg.ibkr_orders === true && String(cfg.broker ?? "").toLowerCase() === "ibkr";
-    return NextResponse.json(await startLiveRun(body.mode === "review" ? "review" : realOrders ? "live" : "paper"));
+    return NextResponse.json(await startLiveRun(body.mode === "review" ? "review" : body.mode === "screen" ? "screen" : realOrders ? "live" : "paper"));
   }
   if (body?.action === "stop") return NextResponse.json({ ok: await stopLiveRun() });
   return NextResponse.json({ ok: false, error: "action: start or stop" }, { status: 400 });

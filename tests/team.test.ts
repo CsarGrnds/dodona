@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { newDesk, openPosition } from "../lib/desk";
 import { acceptBatch } from "../lib/data/ibkrOrders";
 import { acceptTeamOrder, brokerState, orderFingerprint, paperPortfolio } from "../lib/data/paper";
-import { firstPrompt, isSessionId, projectSlug, stepsFrom, teamModels, usageFrom } from "../lib/data/transcripts";
+import { exitAnswer, firstPrompt, isSessionId, projectSlug, stepsFrom, teamModels, usageFrom } from "../lib/data/transcripts";
 
 test("any Claude Code session: its first prompt as the title, and only real session ids", () => {
   const head = [
@@ -22,7 +22,7 @@ test("each specialist runs on a model sized to its job", async () => {
   const m = await teamModels();
   assert.deepEqual(
     Object.fromEntries(Object.entries(m).sort()),
-    { "trade-analyst": "sonnet", "trade-budget": "haiku", "trade-chartist": "sonnet", "trade-coach": "opus", "trade-entry": "haiku", "trade-exit": "haiku", "trade-news": "sonnet", "trade-risk": "haiku", "trade-scanner": "haiku", "trade-timemachine": "haiku" },
+    { "trade-analyst": "sonnet", "trade-budget": "haiku", "trade-chartist": "sonnet", "trade-coach": "opus", "trade-entry": "haiku", "trade-exit": "haiku", "trade-news": "sonnet", "trade-risk": "haiku", "trade-scanner": "haiku", "trade-screener": "sonnet", "trade-timemachine": "haiku" },
   );
 });
 
@@ -106,6 +106,21 @@ test("transcripts: the lead's steps, delegations and the subagents' reports", ()
   assert.equal(steps[4].detail, "VERDICT: coin flip");
   assert.equal(steps[6].ok, false);
   assert.deepEqual(delegates.map((d) => d.agent), ["trade-timemachine"]);
+});
+
+test("a trader skill's exit 1 is its answer (nothing new, not triggered), a crash is still an error", () => {
+  assert.equal(exitAnswer("news.py", 'Exit code 1\n{"moves": []}'), "nothing new");
+  assert.equal(exitAnswer("check.py", "Exit code 1\nBLOCK TSLA: over the daily limit"), "BLOCK");
+  assert.equal(exitAnswer("news.py", "Exit code 1\nTraceback (most recent call last):\n  KeyError"), undefined);
+  assert.equal(exitAnswer("news.py", "Exit code 2\nnews: no tickers"), undefined);
+  assert.equal(exitAnswer(undefined, "Exit code 1"), undefined);
+  const cmd = 'cd trader/paper && python3 "/x/.claude/skills/trader-news/news.py" --json';
+  const { steps } = stepsFrom([
+    { timestamp: "2026-11-20T14:16:20Z", message: { role: "assistant", content: [{ type: "tool_use", id: "n", name: "Bash", input: { command: cmd } }] } },
+    { timestamp: "2026-11-20T14:16:29Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "n", is_error: true, content: 'Exit code 1\n{"moves": []}' }] } },
+  ], "trade-screener");
+  assert.equal(steps[1].title, "/trader-news · news.py → nothing new");
+  assert.equal(steps[1].ok, true);
 });
 
 test("ibkr batch: every order must PASS trader-risk, recently, as buy brackets in different stocks", () => {

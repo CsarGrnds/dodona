@@ -13,10 +13,13 @@
 //   npm run desk -- stage add [--trigger P] | list | drop | done | clear   REAL account: stage the morning batch
 //   npm run desk -- candidate --symbol X --trigger P --stop S --target T --verdict take|skip --why "…" [--setup orb --mode live --chart-score 4 --market normal]
 //   npm run desk -- review [--date YYYY-MM-DD]     replay the day's candidates on real bars and grade the calls
+//   npm run desk -- shortlist build | show | drop --symbol X --why "…"   the pre-market shortlist (trader/shortlist.json) live runs scan
+//   npm run desk -- pending [--all]               formed-not-broken ranges: today's shortlist only, or the whole market with --all
 import { appendFile, mkdir, readdir, rename, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { learningStats, replay, type Candidate, type Replay } from "../lib/learning";
 import { scanPending } from "../lib/data/pending";
+import { buildShortlist, dropFromShortlist, readShortlist, todaysShortlist } from "../lib/data/shortlist";
 import { marketStatus, nextBell } from "../lib/clock";
 import {
   buyFill,
@@ -204,8 +207,33 @@ async function main() {
         const pf = JSON.parse(await readFile(real("portfolio.json"), "utf8").catch(() => "null"));
         const held = ((pf?.positions ?? []) as Array<{ ticker?: string }>).map((p) => String(p.ticker ?? "").toUpperCase()).filter(Boolean);
         const maxPrice = Number(flag("max-price")) || Math.min((rules.budget * (1 - rules.cash_buffer_pct / 100)), (rules.budget * rules.max_position_pct) / 100, rules.max_order_usd);
-        const scan = await scanPending({ maxPrice, exclude: [...held, ...rules.blocked], limit: Number(flag("limit")) || 8, confirm: Number(flag("confirm")) || 150, ...(flag("min-range") ? { minRangePct: Number(flag("min-range")) } : {}) });
-        result = { ...scan, maxPrice, excludedHeld: held.length, next: "for the best ones: trade-chartist, then trade-exit with --entry <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb, Time Machine, budget, stage add" };
+        // today's pre-market shortlist when there is one (trade-screener built it); --all scans the whole market
+        const listed = argv.includes("--all") ? null : await todaysShortlist();
+        const scan = await scanPending({ ...(listed ? { symbols: listed } : {}), maxPrice, exclude: [...held, ...rules.blocked], limit: Number(flag("limit")) || 8, confirm: Number(flag("confirm")) || 150, ...(flag("min-range") ? { minRangePct: Number(flag("min-range")) } : {}) });
+        result = { ...scan, source: listed ? `today's shortlist (${listed.length} names)` : "the whole market (no shortlist for today)", maxPrice, excludedHeld: held.length, next: "for the best ones: trade-chartist, then trade-exit with --entry <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb, Time Machine, budget, stage add" };
+        break;
+      }
+
+      case "shortlist": {
+        // Before the open: the day's shortlist from daily closes (uptrend, liquid, moves enough, beats SPY,
+        // fits the account), so the live runs only look for ranges in names that pass the basics.
+        if (sub === "build") {
+          const real = (p: string) => resolve(process.cwd(), "trader", p);
+          const pf = JSON.parse(await readFile(real("portfolio.json"), "utf8").catch(() => "null"));
+          const held = ((pf?.positions ?? []) as Array<{ ticker?: string }>).map((p) => String(p.ticker ?? "").toUpperCase()).filter(Boolean);
+          const maxPrice = Number(flag("max-price")) || Math.min((rules.budget * (1 - rules.cash_buffer_pct / 100)), (rules.budget * rules.max_position_pct) / 100, rules.max_order_usd);
+          const doc = await buildShortlist({ maxPrice, exclude: [...held, ...rules.blocked], keep: Number(flag("keep")) || 40 });
+          result = { date: doc.date, universe: doc.universe, fetched: doc.fetched, spyReturn20: doc.spyReturn20, maxPrice, kept: doc.kept.length, top: doc.kept.slice(0, Number(flag("show")) || 15), reasons: doc.reasons, file: "trader/shortlist.json", next: "trade-news on the top names (one news.py call), then `shortlist drop --symbol X --why` for every AVOID" };
+        } else if (sub === "drop") {
+          const sym = flag("symbol");
+          const why = flag("why");
+          if (!sym || !why) fail("shortlist drop needs --symbol and --why");
+          const doc = await dropFromShortlist(sym!, why!, flag("by") ?? "news");
+          result = { ok: true, dropped: sym!.toUpperCase(), kept: doc.kept.length };
+        } else {
+          const doc = await readShortlist();
+          result = doc ? { date: doc.date, today: doc.date === nyClock(Date.now()).date, built_at: doc.built_at, kept: doc.kept, dropped: doc.dropped, reasons: doc.reasons } : { today: false, note: "no shortlist yet: `npm run desk -- shortlist build`" };
+        }
         break;
       }
 

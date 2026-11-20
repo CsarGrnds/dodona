@@ -570,3 +570,37 @@ ul.news li { margin-bottom: 4px; }
 details.why { margin-top: 2px; }
 details.why > summary { cursor: pointer; width: fit-content; }
 details.why[open] > summary { margin-bottom: 2px; }
+
+/* ---- Agents: the trade team's profiles in a row, one open for reading or editing */
+.ag-row { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 10px; margin-bottom: 12px; scroll-snap-type: x proximity; }
+.ag-card { position: relative; flex: 0 0 150px; scroll-snap-align: start; display: grid; gap: 4px; justify-items: start; text-align: left; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 10px; color: var(--text); }
+.ag-card:hover { border-color: var(--c); }
+.ag-card.on { background: color-mix(in srgb, var(--c) 12%, var(--panel)); border-color: var(--c); }
+/* character select: each doll on a little lit stage, the picked one talks and hops */
+.ag-stage { justify-self: stretch; display: grid; place-items: end center; height: 100px; margin: -4px -4px 4px; border-radius: 8px; background: radial-gradient(ellipse 60% 22% at 50% 88%, color-mix(in srgb, var(--c) 30%, transparent), transparent 70%), linear-gradient(180deg, #0e131c, #161d2a); border: 1px solid var(--line); overflow: hidden; }
+.ag-card:not(.on) .ag-stage .doll { filter: saturate(.75) brightness(.9); transition: filter .15s, transform .15s; }
+.ag-card:hover .ag-stage .doll { filter: none; transform: translateY(-2px); }
+.ag-card.on::after { content: "▼"; position: absolute; top: -2px; left: 50%; transform: translateX(-50%); color: var(--c); font-size: 10px; animation: fl-hop .5s steps(2) infinite alternate; }
+.doll { display: block; overflow: visible; }
+.ag-hero { display: flex; gap: 16px; align-items: center; }
+.ag-spot { width: 150px; height: 170px; display: grid; place-items: end center; padding-bottom: 6px; border-radius: 12px; border: 1px solid var(--line); background: radial-gradient(ellipse 55% 14% at 50% 92%, color-mix(in srgb, var(--c) 40%, transparent), transparent 70%), radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--c) 18%, transparent), transparent 60%), linear-gradient(180deg, #0c1018, #171e2b); }
+.ag-lvl { display: inline-block; letter-spacing: .14em; font-weight: 700; color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); border-radius: 4px; padding: 1px 6px; margin-bottom: 6px; }
+.ag-meta { color: var(--c); }
+.ag-profile { border-top: 3px solid var(--c); display: grid; gap: 12px; }
+.ag-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.ag-head h3 { margin: 0 0 2px; font-size: 22px; letter-spacing: .02em; }
+@media (max-width: 600px) { .ag-hero { flex-direction: column; align-items: flex-start; } }
+.ag-facts { display: grid; gap: 8px; }
+.ag-facts > div { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.ag-facts > div > .muted.small:first-child { min-width: 150px; }
+.ag-desc { line-height: 1.5; }
+.ag-ok { color: var(--buy); padding: 8px 12px; }
+.ag-body { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px; max-height: 70vh; overflow: auto; }
+.ag-editor { width: 100%; min-height: 60vh; resize: vertical; background: var(--bg); color: var(--text); border: 1px solid var(--c); border-radius: 8px; padding: 14px; font-size: 12.5px; line-height: 1.55; tab-size: 2; }
+.ag-editor:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 35%, transparent); }
+
+/* the floor's right-click menu on a desk */
+.fl-menu { position: fixed; z-index: 50; min-width: 180px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+.fl-menu .fl-menu-h { padding: 6px 10px 4px; font-size: 11px; color: var(--muted); }
+.fl-menu button { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); padding: 7px 10px; border-radius: 6px; }
+.fl-menu button:hover, .fl-menu button:focus { background: color-mix(in srgb, var(--accent) 15%, transparent); outline: none; }

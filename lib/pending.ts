@@ -8,8 +8,11 @@
 //   - the last price is within `maxBelowPct` of the range high (close enough to break today)
 //   - the last price is above VWAP (buyers in control) and above the range's midpoint
 //   - volume so far vs the same bars on past sessions (relative volume) is reported and ranked
+//   - not in a daily downtrend (under both its 20- and 50-day averages): dailyTrend()
 import type { IntradayBar } from "./setups";
 import { nyClock } from "./setups";
+import { sma } from "./indicators";
+import type { Bar } from "./types";
 
 export interface PendingRange {
   symbol: string;
@@ -22,6 +25,8 @@ export interface PendingRange {
   relVolume?: number; // today's volume so far vs the same bars on the last 20 sessions
   rangePct: number; // the range's width, % of its high
   bars: number; // completed bars today
+  sma20?: number; // daily averages (completed sessions), when the trend was checked
+  sma50?: number;
 }
 
 export interface PendingOpts {
@@ -84,6 +89,21 @@ export function pendingRange(symbol: string, bars: IntradayBar[], o: PendingOpts
 }
 
 export const isPending = (x: PendingRange | { why: string }): x is PendingRange => !("why" in x);
+
+/**
+ * The daily trend behind a range. A stock under BOTH its 20- and 50-day averages is in a daily
+ * downtrend: its breakouts run into those averages on the way to the target, and the team's
+ * replays (playbook note, 2026-11-18/19) show them stopping out. Those are left out of the scan.
+ * Averages use completed sessions only (bars before `today`). Under 50 sessions: no verdict.
+ */
+export function dailyTrend(bars: Bar[], today: string, last: number): { sma20: number; sma50: number } | { why: string } | null {
+  const closes = bars.filter((b) => b.time < today && Number.isFinite(b.close)).map((b) => b.close);
+  if (closes.length < 50) return null;
+  const sma20 = r2(sma(closes, 20).at(-1)!);
+  const sma50 = r2(sma(closes, 50).at(-1)!);
+  if (last < sma20 && last < sma50) return { why: `daily downtrend: ${r2(last)} under its 20-day ${sma20} and 50-day ${sma50} averages` };
+  return { sma20, sma50 };
+}
 
 /** Best first: stronger relative volume, then closer to the trigger. */
 export function rankPending(xs: PendingRange[]): PendingRange[] {

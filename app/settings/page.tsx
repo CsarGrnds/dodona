@@ -122,6 +122,7 @@ export default function SettingsPage() {
           <Link className="btn ghost" href="/today">Today</Link>
           <Link className="btn ghost" href="/portfolio">Portfolio</Link>
           <Link className="btn ghost" href="/desk">Desk</Link>
+          <Link className="btn ghost" href="/agents">Agents</Link>
           <Link className="btn ghost" href="/status">Status</Link>
         </div>
       </div>
