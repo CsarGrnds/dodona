@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { dueSlot, parseAutoTimes } from "../autoBatch";
+import { dueSlot, openNote, parseAutoTimes, runNote } from "../autoBatch";
 import { marketStatus, tradingDay } from "../clock";
 import { gatewayStatus, syncFromGateway } from "./ibkr";
 
@@ -200,7 +200,58 @@ export function notifyMac(title: string, text: string) {
   }
 }
 
+/** DODONA_IMESSAGE_TO: the user's own phone number (+15551234567) or Apple ID email; anything else is ignored. */
+export function imessageTo(v = process.env.DODONA_IMESSAGE_TO): string | undefined {
+  const s = v?.trim().replace(/[\s().-]/g, "");
+  if (!s) return undefined;
+  if (/^\+?\d{8,15}$/.test(s)) return s;
+  if (/^[^@\s"\\]+@[^@\s"\\]+\.[A-Za-z]{2,}$/.test(v!.trim())) return v!.trim();
+  return undefined;
+}
+
+/**
+ * The same alert as an iMessage from this Mac's Messages app to the user's own number or Apple ID
+ * (DODONA_IMESSAGE_TO in .env.local), so it reaches their phone when they're away. Only Apple's
+ * iMessage carries it, nothing else. The handle and text go to AppleScript as arguments, never pasted
+ * into the script. Resolves to an error message, or undefined when sent.
+ */
+export function notifyIMessage(text: string): Promise<string | undefined> {
+  const to = imessageTo();
+  if (process.platform !== "darwin") return Promise.resolve("iMessage alerts need macOS");
+  if (!to) return Promise.resolve("set DODONA_IMESSAGE_TO in .env.local to your phone number or Apple ID");
+  const script = [
+    "on run argv",
+    'tell application "Messages"',
+    "set svc to 1st account whose service type = iMessage",
+    "send (item 2 of argv) to participant (item 1 of argv) of svc",
+    "end tell",
+    "end run",
+  ].join("\n");
+  return new Promise((done) => {
+    try {
+      const p = spawn("osascript", ["-e", script, to, text], { stdio: ["ignore", "ignore", "pipe"] });
+      let err = "";
+      p.stderr.on("data", (d) => (err += d));
+      const t = setTimeout(() => p.kill(), 20_000);
+      p.on("close", (code) => {
+        clearTimeout(t);
+        done(code === 0 ? undefined : err.trim() || `osascript exited ${code}`);
+      });
+      p.on("error", (e) => done(e.message));
+    } catch (e) {
+      done(e instanceof Error ? e.message : String(e));
+    }
+  });
+}
+
+/** Tell the user: a banner on this Mac and, when DODONA_IMESSAGE_TO is set, an iMessage to their phone. */
+export function notifyUser(title: string, text: string) {
+  notifyMac(title, text);
+  if (imessageTo()) void notifyIMessage(`${title}: ${text}`);
+}
+
 const SCREEN_AT = 9 * 60 + 15; // the pre-market shortlist run, New York
+const OPEN_NOTE_AT = 9 * 60 + 35; // the "market is open" text, 5 minutes into the session
 const AUTO_DONE = (date: string) => join(dir(), `auto-${date}.json`);
 const readJsonFile = async (p: string) => JSON.parse(await readFile(p, "utf8").catch(() => "null"));
 
@@ -209,9 +260,19 @@ export async function autoBatchTick(now = new Date()): Promise<string> {
   const cfg = ((await readJsonFile(resolve(process.cwd(), "trader", "config.json"))) ?? {}) as Record<string, unknown>;
   const ny = nyNow(now);
   await notifyWhenReady(now);
+  await notifyRunDone(now);
   if (cfg.auto_batch !== true || cfg.ibkr_orders !== true || String(cfg.broker ?? "").toLowerCase() !== "ibkr") return "off";
   await mkdir(dir(), { recursive: true });
   const doneDoc = ((await readJsonFile(AUTO_DONE(ny.date))) ?? { slots: [] }) as { slots: string[] };
+  // 5 minutes into the session (9:35-9:59 New York): one text on where the day stands.
+  if (!ny.weekend && tradingDay(ny.date).ok && ny.minute >= OPEN_NOTE_AT && ny.minute < 10 * 60 && !doneDoc.slots.includes("open-note")) {
+    doneDoc.slots.push("open-note");
+    await writeFile(AUTO_DONE(ny.date), JSON.stringify(doneDoc));
+    const gw = await gatewayStatus().catch(() => ({ state: "down" as const }));
+    const shortlist = await readJsonFile(resolve(process.cwd(), "trader", "shortlist.json"));
+    const text = openNote({ date: ny.date, gateway: gw.state, shortlist, times: parseAutoTimes(String(cfg.auto_batch_times ?? "")), nowMinute: ny.minute });
+    notifyUser("Dodona: market open", text);
+  }
   // Before the open (9:15-9:40 New York): the day's shortlist, once (trade-screener; stages nothing).
   if (!ny.weekend && tradingDay(ny.date).ok && ny.minute >= SCREEN_AT && ny.minute < 9 * 60 + 40 && !doneDoc.slots.includes("screen")) {
     const st = await state();
@@ -234,7 +295,7 @@ export async function autoBatchTick(now = new Date()): Promise<string> {
   await writeFile(AUTO_DONE(ny.date), JSON.stringify(doneDoc));
   const gw = await gatewayStatus().catch(() => ({ state: "down" as const }));
   if (gw.state !== "ready") {
-    notifyMac("Dodona: IBKR gateway logged out", `The ${slot} batch didn't run. Log in at https://localhost:5001 (or say "refresh IBKR").`);
+    notifyUser("Dodona: IBKR gateway logged out", `The ${slot} batch didn't run. Log in at https://localhost:5001 (or say "refresh IBKR").`);
     return "gateway not ready";
   }
   const r = await startLiveRun("live");
@@ -242,6 +303,19 @@ export async function autoBatchTick(now = new Date()): Promise<string> {
 }
 
 const NOTIFIED = () => join(dir(), "notified.json");
+const RUN_NOTIFIED = () => join(dir(), "run-notified.json");
+
+/** Once per batch check or screen run: when it finishes, text the user what it found (staged or not, and why). */
+async function notifyRunDone(now: Date) {
+  const st = await state();
+  if (!st || (st.mode !== "live" && st.mode !== "screen") || alive(st.pid)) return;
+  if (now.getTime() - Date.parse(st.startedAt) > 2 * 3600_000) return; // only fresh runs
+  if ((await readJsonFile(RUN_NOTIFIED()))?.startedAt === st.startedAt) return;
+  const run = summarize(await readFile(st.log, "utf8").catch(() => ""));
+  await writeFile(RUN_NOTIFIED(), JSON.stringify({ startedAt: st.startedAt }));
+  notifyUser(st.mode === "screen" ? "Dodona: shortlist ready" : "Dodona: batch check done", runNote(run.result, run.error));
+}
+
 
 /** Once per risk check: if a batch is ready for the user, say so on this Mac. */
 async function notifyWhenReady(now: Date) {
@@ -256,11 +330,11 @@ async function notifyWhenReady(now: Date) {
   await mkdir(dir(), { recursive: true });
   await writeFile(NOTIFIED(), JSON.stringify({ checked_at: risk.checked_at }));
   const syms = orders.orders.map((o: { qty?: string; symbol?: string }) => `${o.qty} ${o.symbol}`).join(", ");
-  notifyMac("Dodona: IBKR batch ready", `${syms}. Approve on the Desk (IBKR orders) within 15 minutes, or it expires.`);
+  notifyUser("Dodona: IBKR batch ready", `${syms}. Approve on the Desk (IBKR orders) within 15 minutes, or it expires.`);
 }
 
 /** While Dodona runs, check every minute: the batch times, a batch to announce, the daily review. Safe to call often. */
-const TIMER_VERSION = 3; // bump when the tick changes, so a running Dodona swaps in the new one
+const TIMER_VERSION = 6; // bump when the tick changes, so a running Dodona swaps in the new one
 export function ensureReviewScheduler() {
   if (g.__dodonaReviewTimer && g.__dodonaTimerVersion === TIMER_VERSION) return;
   if (g.__dodonaReviewTimer) clearInterval(g.__dodonaReviewTimer);

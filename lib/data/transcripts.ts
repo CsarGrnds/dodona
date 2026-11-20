@@ -145,11 +145,32 @@ function parseLines(text: string, from: number, to: number): Rec[] {
   return out;
 }
 
+/**
+ * The trader skills answer "no" with exit code 1 (news.py: nothing new; entry.py: not triggered; check.py:
+ * BLOCK…), which Claude Code reports as a failed command. Name that answer instead of calling it an error.
+ * A crash also exits 1 but prints a Traceback, so it stays an error; so does any other code.
+ */
+const EXIT1: Record<string, string> = {
+  "news.py": "nothing new",
+  "ptr.py": "nothing new",
+  "entry.py": "not triggered",
+  "scan.py": "no setups",
+  "check.py": "BLOCK",
+  "size.py": "no order",
+  "alerts.py": "nothing rang",
+  "ticket.py": "none ready",
+};
+export function exitAnswer(script: string | undefined, out: string): string | undefined {
+  if (!script || !EXIT1[script]) return undefined;
+  if (!/^Exit code 1\b/.test(out) || /Traceback \(most recent call last\)/.test(out)) return undefined;
+  return EXIT1[script];
+}
+
 /** Turn transcript records into steps. `agent` names whose work this is. */
 export function stepsFrom(recs: Rec[], agent: string): { steps: TeamStep[]; delegates: Array<{ id: string; at: number; agent: string }> } {
   const steps: TeamStep[] = [];
   const delegates: Array<{ id: string; at: number; agent: string }> = [];
-  const pending = new Map<string, { kind: "agent" | "bash" | "other"; agent?: string; title: string }>();
+  const pending = new Map<string, { kind: "agent" | "bash" | "other"; agent?: string; title: string; script?: string }>();
   for (const r of recs) {
     const at = r.timestamp!;
     for (const b of r.message!.content as Block[]) {
@@ -168,7 +189,7 @@ export function stepsFrom(recs: Rec[], agent: string): { steps: TeamStep[]; dele
           const desk = cmd.match(/npm run (?:-s )?desk -- ([a-z]+(?: [a-z]+)?)/);
           const title = skill ? `/${skill[1]} · ${skill[2]}${skill[3] ? ` ${skill[3]}` : ""}` : desk ? `desk ${desk[1]}` : String(inp.description ?? cmd.split("\n")[0]).slice(0, 120);
           steps.push({ at, agent, kind: skill ? "skill" : "command", title, detail: cut(cmd, 800) });
-          pending.set(b.id, { kind: "bash", title });
+          pending.set(b.id, { kind: "bash", title, script: skill?.[2] });
         } else {
           const title = b.name === "Skill" ? `Skill /${String(inp.skill ?? "")}` : b.name === "Read" ? `Read ${String(inp.file_path ?? "").split("/").slice(-3).join("/")}` : String(b.name ?? "tool").replace(/^mcp__(.+?)__(.+)$/, (_, srv: string, t: string) => `${/^[0-9a-f-]{20,}$/.test(srv) ? "connector" : srv.replace(/_/g, " ")} · ${t.replace(/_/g, " ")}`);
           steps.push({ at, agent, kind: "tool", title });
@@ -179,7 +200,11 @@ export function stepsFrom(recs: Rec[], agent: string): { steps: TeamStep[]; dele
         if (!p) continue;
         const txt = resultText(b.content).trim();
         if (p.kind === "agent") steps.push({ at, agent: p.agent!, kind: "report", title: `${p.agent} reported`, detail: cut(txt), ok: !b.is_error });
-        else if (p.kind === "bash") steps.push({ at, agent, kind: "output", title: `${p.title} → ${b.is_error ? "error" : "done"}`, detail: cut(txt), ok: !b.is_error });
+        else if (p.kind === "bash") {
+          const answer = b.is_error ? exitAnswer(p.script, txt) : undefined;
+          const failed = b.is_error && !answer;
+          steps.push({ at, agent, kind: "output", title: `${p.title} → ${answer ?? (failed ? "error" : "done")}`, detail: cut(txt), ok: !failed });
+        }
       }
     }
   }

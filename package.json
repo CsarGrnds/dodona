@@ -14,7 +14,8 @@
     "demo:portfolio": "tsx scripts/demo-portfolio.ts",
     "screenshots": "bash scripts/screenshots.sh",
     "desk": "tsx scripts/desk.ts",
-    "chart": "tsx scripts/chart.ts"
+    "chart": "tsx scripts/chart.ts",
+    "notify:test": "tsx scripts/notify-test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.2.0",
