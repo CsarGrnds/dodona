@@ -1,9 +1,11 @@
 "use client";
 // Settings: every trading decision in one place. The rules every /trader-* skill and Dodona's desk
 // follow (trader/config.json), who makes the desk's entries, and which model each trade team agent
-// runs on. Safety switches (paper, margin, shorts, options) are shown but only changeable in the file.
+// runs on. Paper mode has its own switch (turning it off asks you to type REAL MONEY); the other safety
+// switches (margin, shorts, options) are shown but only changeable in the file.
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { PaperSwitch } from "@/components/PaperSwitch";
 import { Brand, Spinner } from "@/components/ui";
 import { AGENT_MODELS, RULE_SECTIONS, TEAM, rulesSummary, validateRules, type Field } from "@/lib/settings";
 
@@ -229,10 +231,11 @@ export default function SettingsPage() {
 
             <section className="panel">
               <h2>Safety switches</h2>
-              <div className="small muted" style={{ marginBottom: 10 }}>
-                Shown, not changeable here. They&apos;re yours to change, yourself, in <code>{s.file}</code>.
+              <PaperSwitch paper={s.locked.find((l) => l.key === "paper")?.value !== false} onChanged={(paper) => setS({ ...s, locked: s.locked.map((l) => (l.key === "paper" ? { ...l, value: paper } : l)) })} />
+              <div className="small muted" style={{ margin: "10px 0" }}>
+                The others are shown, not changeable here. They&apos;re yours to change, yourself, in <code>{s.file}</code>.
               </div>
-              {s.locked.map((l) => {
+              {s.locked.filter((l) => l.key !== "paper").map((l) => {
                 const safe = l.value === l.safe;
                 return (
                   <div key={l.key} className="row st-locked">

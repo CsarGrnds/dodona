@@ -71,7 +71,7 @@ export const RULE_SECTIONS: Section[] = [
   {
     id: "broker",
     title: "Broker",
-    blurb: "Where real orders would go. Dodona's desk and the trade team stay on paper either way.",
+    blurb: "Where real orders go when paper mode is off (Safety switches below).",
     fields: [
       { key: "broker", label: "Broker", type: "choice", options: [{ value: "ibkr", label: "Interactive Brokers" }, { value: "alpaca", label: "Alpaca" }], help: "Which broker /trader-broker and Dodona's order ticket work with." },
       { key: "auto_batch", label: "Prepare the batch by itself", type: "bool", help: "At the times below, Dodona starts the trade team (/trade-desk live) on its own, and puts a notification on this Mac when a batch is ready. It never places anything: you still approve each batch on the Desk, within 15 minutes. Needs Dodona running and the gateway logged in." },

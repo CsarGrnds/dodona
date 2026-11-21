@@ -3,6 +3,7 @@ import { normalizeSymbol } from "@/lib/data";
 import { loadOrCreateDesk, readDeskRules, withDeskLock, writeDesk } from "@/lib/data/desk";
 import { runDesk } from "@/lib/data/deskRun";
 import { deskView } from "@/lib/data/deskView";
+import { PRACTICE_OFF, practiceOn } from "@/lib/data/practice";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -20,6 +21,8 @@ export async function POST(req: Request) {
       /* skip bad tickers */
     }
   }
+  // the practice ledger only runs in paper mode: real-money mode spends nothing on fake trades
+  if (!(await practiceOn())) return NextResponse.json({ error: PRACTICE_OFF }, { status: 409 });
   try {
     return await withDeskLock(async () => {
       const { rules, fromFile } = await readDeskRules();

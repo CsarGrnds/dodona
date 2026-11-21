@@ -34,4 +34,8 @@ export function deskView(s: DeskState, rules: DeskRules, rulesFromFile: boolean,
   };
 }
 
-export type DeskView = ReturnType<typeof deskView> & { realOrders?: { on: boolean; live: boolean; gateway?: "down" | "login" | "ready"; autoBatch?: string[] } };
+export type DeskView = ReturnType<typeof deskView> & {
+  realOrders?: { on: boolean; live: boolean; gateway?: "down" | "login" | "ready"; autoBatch?: string[] };
+  practice?: boolean; // paper mode: the ledger shows; off = real money, the real account shows
+  account?: { value: number; cash: number; invested: number; unrealized: number; positions: number; syncedAt?: string }; // the real IBKR account, last sync
+};

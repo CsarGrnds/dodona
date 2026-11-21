@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import { dueSlot, openNote, parseAutoTimes, runNote } from "../autoBatch";
 import { marketStatus, tradingDay } from "../clock";
 import { gatewayStatus, syncFromGateway } from "./ibkr";
+import { PRACTICE_OFF, practiceOn } from "./practice";
 
 const dir = () => resolve(process.cwd(), "trader", "runs");
 const STATE = () => join(dir(), "live-run.json");
@@ -82,6 +83,8 @@ async function state(): Promise<RunState | null> {
 export async function startLiveRun(mode: RunMode = "live"): Promise<{ ok: boolean; error?: string; run?: LiveRun }> {
   const st = await state();
   if (st && alive(st.pid)) return { ok: false, error: "A run is already going." };
+  // a paper cycle is practice: none while paper mode is off (it would spend tokens on fake trades)
+  if (mode === "paper" && !(await practiceOn())) return { ok: false, error: PRACTICE_OFF };
   await mkdir(dir(), { recursive: true });
   // the team sizes from, and leaves out, the real portfolio: refresh it from IBKR first (read-only)
   if (mode === "live") await syncFromGateway().catch(() => undefined);

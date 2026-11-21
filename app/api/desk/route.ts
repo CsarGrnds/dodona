@@ -5,6 +5,7 @@ import { deskView } from "@/lib/data/deskView";
 import { parseAutoTimes } from "@/lib/autoBatch";
 import { ensureGatewayKeepAlive, gatewayStatus } from "@/lib/data/ibkr";
 import { ensureReviewScheduler } from "@/lib/data/liveRun";
+import { readPortfolio } from "@/lib/data/portfolio";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,20 @@ export async function GET() {
     const on = cfg.ibkr_orders === true && String(cfg.broker ?? "").toLowerCase() === "ibkr";
     const gateway = on ? (await gatewayStatus().catch(() => ({ state: "down" as const }))).state : undefined;
     const realOrders = { on, live: cfg.paper === false, gateway, autoBatch: on && cfg.auto_batch === true ? parseAutoTimes(String(cfg.auto_batch_times ?? "")) : [] };
-    return NextResponse.json({ ...deskView(s, rules, fromFile), realOrders }, { headers: { "Cache-Control": "no-store" } });
+    // paper mode off: real money. The page shows the real IBKR account (last sync), not the ledger.
+    const practice = cfg.paper !== false;
+    const p = practice ? null : await readPortfolio().catch(() => null);
+    const account = p
+      ? {
+          value: p.netLiquidation,
+          cash: p.cash,
+          invested: p.grossPositionValue ?? p.positions.reduce((a, x) => a + (x.marketValue ?? 0), 0),
+          unrealized: p.positions.reduce((a, x) => a + (x.unrealizedPnl ?? 0), 0),
+          positions: p.positions.filter((x) => x.shares > 0).length,
+          syncedAt: p.syncedAt,
+        }
+      : undefined;
+    return NextResponse.json({ ...deskView(s, rules, fromFile), realOrders, practice, account }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
