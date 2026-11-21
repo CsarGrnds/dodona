@@ -42,8 +42,21 @@ export function Brand({ sub }: { sub?: string }) {
 export function Disclaimer() {
   return (
     <p className="disclaimer">
-      Dodona is decision support, not financial advice. Data from Yahoo Finance (unofficial) with Google Finance fallback; may be delayed or wrong. Verify before trading.
+      Dodona is decision support, not financial advice. Data from Yahoo Finance (unofficial) with Google Finance fallback; may be delayed or wrong. Verify before trading. <ChartCredit />
     </p>
+  );
+}
+
+/** The attribution TradingView's Lightweight Charts license asks for (the charts hide its logo). */
+export function ChartCredit() {
+  return (
+    <span className="chart-credit">
+      Charts by{" "}
+      <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">
+        TradingView
+      </a>{" "}
+      Lightweight Charts™.
+    </span>
   );
 }
 

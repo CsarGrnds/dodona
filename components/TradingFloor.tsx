@@ -67,7 +67,24 @@ function linesFrom(steps: TeamStep[]): Line[] {
   return out;
 }
 
-export function TradingFloor({ session }: { session?: string }) {
+/** What the team says on the floor while the market is closed and no run is going (shown in a loop). */
+export const IDLE_LINES: Array<{ from: string; text: string }> = [
+  { from: "lead", text: "Market's closed. I'm officially a long-term investor until the bell." },
+  { from: "trade-scanner", text: "Scanned every chart for breakouts. Found one: a breakout of silence." },
+  { from: "trade-news", text: "Breaking news: nothing is breaking." },
+  { from: "trade-chartist", text: "This flat line is the cleanest chart I've seen all week. 5/5." },
+  { from: "trade-timemachine", text: "Ran 10,000 simulations of tonight. The market stayed closed in all of them." },
+  { from: "trade-risk", text: "Risk check on a nap: PASS." },
+  { from: "trade-budget", text: "Sized the coffee order. Bound by the max-loss rule: one cup." },
+  { from: "trade-entry", text: "Entry signal: the opening bell. Until then I'm waiting on a completed bar of sleep." },
+  { from: "trade-exit", text: "Stop set at 'bed'. Target: breakfast." },
+  { from: "trade-analyst", text: "Read three 10-Qs for fun. Don't tell anyone." },
+  { from: "trade-screener", text: "Shortlist for tonight: pillow, blanket, snacks. All liquid, none stretched." },
+  { from: "trade-coach", text: "New playbook lesson: rest is a position too." },
+];
+
+export function TradingFloor({ session, idle }: { session?: string; idle?: { title: string; note: string; onReplay?: () => void } }) {
+  const isIdle = !!idle;
   const [tx, setTx] = useState<TeamTranscript>();
   const [live, setLive] = useState(false);
   const [win, setWin] = useState<{ start: string; end?: string }>(); // the session's time window
@@ -144,7 +161,23 @@ export function TradingFloor({ session }: { session?: string }) {
     };
   }, [win]);
 
-  const lines = useMemo(() => linesFrom(tx?.steps ?? []), [tx]);
+  const lines = useMemo<Line[]>(() => (isIdle ? IDLE_LINES.map((l) => ({ at: "", from: l.from, text: l.text, kind: "say" })) : linesFrom(tx?.steps ?? [])), [tx, isIdle]);
+  // closed floor: the jokes play on a loop from the start; a session (picked or live) shows its own lines
+  const wasIdle = useRef(false);
+  useEffect(() => {
+    setPick(undefined);
+    if (isIdle) {
+      setAt(0);
+      setPlay(true);
+    } else if (wasIdle.current) {
+      // back from the closed floor: stop on the session's latest message, like a first load
+      setAt(Math.max(0, linesFrom(tx?.steps ?? []).length - 1));
+      setPlay(live);
+    }
+    wasIdle.current = isIdle;
+    // only when the floor opens or closes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isIdle]);
   // no logged candidates (a paper or review run): the symbols the lead handed out, e.g. "Chart score for COO"
   const tape: Stock[] = useMemo(() => {
     if (stocks.length) return stocks;
@@ -152,12 +185,13 @@ export function TradingFloor({ session }: { session?: string }) {
     for (const l of lines) if (l.kind === "hand") for (const m of l.text.matchAll(/\b(?:for|on)\s+([A-Z]{1,5})\b/g)) syms.add(m[1]);
     return [...syms].map((symbol) => ({ symbol }));
   }, [stocks, lines]);
-  const present = useMemo(() => new Set(["lead", ...(tx?.agents ?? []).map((a) => keyOf(a.agent))]), [tx]);
+  const present = useMemo(() => new Set(isIdle ? Object.keys(SEATS) : ["lead", ...(tx?.agents ?? []).map((a) => keyOf(a.agent))]), [tx, isIdle]);
 
   const involves = (l: Line, k?: string) => !k || l.from === k || l.to === k;
   const mine = useMemo(() => lines.map((l, i) => ({ l, i })).filter((x) => involves(x.l, pick)), [lines, pick]);
   const counts = useMemo(() => {
     const m = new Map<string, number>();
+    if (isIdle) return m;
     for (const l of lines) for (const k of new Set([l.from, l.to].filter(Boolean) as string[])) m.set(k, (m.get(k) ?? 0) + 1);
     return m;
   }, [lines]);
@@ -166,13 +200,13 @@ export function TradingFloor({ session }: { session?: string }) {
   // playback: one line every ~2 s (only the picked agent's lines when one is picked); a live session
   // waits at the newest line for the next one
   useEffect(() => {
-    const next = mine.find((x) => x.i > at)?.i;
+    const next = mine.find((x) => x.i > at)?.i ?? (isIdle && lines.length ? 0 : undefined);
     if (!play || next === undefined) return;
     const cur = lines[at];
-    const ms = (cur?.kind === "work" ? 1300 : 2600) / speed;
+    const ms = (isIdle ? 4200 : cur?.kind === "work" ? 1300 : 2600) / speed;
     const id = setTimeout(() => setAt(next), ms);
     return () => clearTimeout(id);
-  }, [play, at, lines, mine, speed]);
+  }, [play, at, lines, mine, speed, isIdle]);
 
   // keep the current message in view inside the side panel (never scrolls the page)
   useEffect(() => {
@@ -204,7 +238,7 @@ export function TradingFloor({ session }: { session?: string }) {
   }, [menu]);
 
   if (err) return <div className="dk-empty">{err}</div>;
-  if (!tx) return <div className="fl-wrap fl-loading" />;
+  if (!tx && !isIdle) return <div className="fl-wrap fl-loading" />;
 
   const cur = lines[at];
   const prev = at > 0 ? lines[at - 1] : undefined;
@@ -214,13 +248,15 @@ export function TradingFloor({ session }: { session?: string }) {
   const shown = cur && involves(cur, pick) ? cur : undefined;
   const pu = pick ? usage.get(pick) : undefined;
   // the LED tape: the stocks this session analyzed, with their levels, chart score and verdict
-  const head = `${live ? "● LIVE" : "▶ REPLAY"} ${win ? new Date(win.start).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) + " ET" : ""}   `;
-  const items = tape.length
+  const head = isIdle ? "■ CLOSED   " : `${live ? "● LIVE" : "▶ REPLAY"} ${win ? new Date(win.start).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) + " ET" : ""}   `;
+  const items = isIdle
+    ? [{ sym: idle.title.toUpperCase(), lv: "", sc: "", v: undefined }]
+    : tape.length
     ? tape.map((t) => ({ sym: t.symbol, lv: t.trigger !== undefined && t.target !== undefined ? ` ${t.trigger.toFixed(2)}→${t.target.toFixed(2)}` : "", sc: t.chartScore !== undefined ? ` CHART ${t.chartScore}/5` : "", v: t.verdict }))
     : [{ sym: "NO STOCKS ANALYZED IN THIS SESSION", lv: "", sc: "", v: undefined }];
   const tapeLen = head.length + items.reduce((a, x) => a + x.sym.length + x.lv.length + x.sc.length + (x.v ? 5 : 0) + 5, 0);
   const tapePx = tapeLen * 6.6; // 10px mono with letter spacing
-  const screens: Array<{ chart?: string; label: string; v?: "take" | "skip"; sc?: number }> = [
+  const screens: Array<{ chart?: string; label: string; v?: "take" | "skip"; sc?: number }> = isIdle ? [] : [
     ...(spy ? [{ chart: spy, label: "SPY · MARKET" }] : []),
     ...tape
       .filter((t) => t.chart)
@@ -433,7 +469,7 @@ export function TradingFloor({ session }: { session?: string }) {
           {shown && <Bubble key={`c-${at}`} line={shown} />}
         </svg>
 
-        <div className="fl-bar">
+        <div className="fl-bar" hidden={isIdle}>
           <button className="btn ghost" onClick={() => { setAt(pick ? mine[0]?.i ?? 0 : 0); setPlay(true); }} title="From the start">⏮</button>
           <button className="btn ghost" onClick={() => setPlay(!play)} title={play ? "Pause" : "Play"}>{play ? "❚❚" : "▶"}</button>
           <button className="btn ghost" onClick={() => { setAt(pick ? mine[mine.length - 1]?.i ?? at : lines.length - 1); setPlay(true); }} title="Latest">⏭</button>
@@ -445,6 +481,16 @@ export function TradingFloor({ session }: { session?: string }) {
         </div>
       </div>
 
+      {isIdle ? (
+        <aside className="fl-side fl-closed" aria-label="Floor closed">
+          <div className="fl-side-head">
+            <b>{idle.title}</b>
+          </div>
+          <p className="small muted">{idle.note}</p>
+          <p className="small muted">The team&apos;s messages show here again as soon as a run starts. Every past session&apos;s log stays in the list below.</p>
+          {idle.onReplay && <button className="btn" onClick={idle.onReplay}>▶ Replay the last session</button>}
+        </aside>
+      ) : (
       <aside className="fl-side" aria-label="Messages">
         {pick ? (
           <div className="fl-pick" style={{ borderColor: SEATS[pick].shirt }}>
@@ -491,6 +537,7 @@ export function TradingFloor({ session }: { session?: string }) {
           </ol>
         )}
       </aside>
+      )}
     </div>
   );
 }

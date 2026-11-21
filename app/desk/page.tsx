@@ -8,7 +8,7 @@ import { TradingFloor } from "@/components/TradingFloor";
 import { NextRunCountdown, TeamRunStatus, startTeamRun } from "@/components/TeamRun";
 import { ClaudeSessionView, TEAM_MODEL, TeamSessionView, type ClaudeSessionInfo } from "@/components/TeamSessionView";
 import { DailyPnlChart, EquityChart, PnlCalendar, RDistribution, signedUsd } from "@/components/DeskCharts";
-import { Brand, Spinner } from "@/components/ui";
+import { Brand, ChartCredit, Spinner } from "@/components/ui";
 import { fmt } from "@/lib/client";
 import type { DeskView } from "@/lib/data/deskView";
 import type { AgentSession, JournalKind } from "@/lib/desk";
@@ -118,6 +118,7 @@ export default function DeskPage() {
     };
   }, [allCc]);
   const [pick, setPick] = useState<string>();
+  const [replay, setReplay] = useState(false); // the user asked for a past session while the floor is closed
 
   const load = useCallback(async () => {
     try {
@@ -224,6 +225,10 @@ export default function DeskPage() {
   const saved = d.sessions ?? [];
   const shown: AgentSession | undefined = running && live ? live : saved.find((x) => x.id === pick) ?? saved[0];
   const ccShown = ccList?.find((x) => x.id === ccPick) ?? ccList?.[0];
+  // the floor talks only while something is happening: market open, or a team run going (the 9:15
+  // screen, the 4:10 review). Otherwise it's closed, until you pick a past session to replay.
+  const teamLive = (running && !!live) || saved.some((x) => x.status === "running");
+  const floorIdle = !d.market.open && !teamLive && !replay;
   const today = st.today;
   const nextRunIn = auto && d.lastRunAt ? Math.max(0, Date.parse(d.lastRunAt) + AUTO_MS - Date.now()) : undefined;
 
@@ -288,12 +293,32 @@ export default function DeskPage() {
             </div>
           </div>
         </div>
+      </section>
+
+      {/* ---- the team's runs: its own card, apart from the account numbers */}
+      <section className="panel dk-runs">
+        <div className="dk-runs-head">
+          <h2 style={{ margin: 0 }}>✦ Team runs</h2>
+          <span className="spacer" />
+          <label className="dk-auto">
+            <input type="checkbox" checked={auto} onChange={toggleAuto} /> {d.driver === "team" ? "Manage paper positions every 5 min" : "Auto every 5 min"}
+          </label>
+          <span className="muted small">
+            Last run {fmt.ago(d.lastRunAt)}
+            {nextRunIn !== undefined && !running ? ` · next in ${Math.ceil(nextRunIn / 60_000)}m` : ""}
+          </span>
+        </div>
         <div className="dk-hero-side">
           {d.driver === "team" ? (
             <>
+              {d.realOrders?.on && !inBatchWindow() && !teamBusy ? (
+                <div className="dk-window small muted" title="The live run only prepares the IBKR batch inside this window; you approve it below.">
+                  IBKR batch window: 9:46 AM–3 PM New York · the team prepares it then, you approve it
+                </div>
+              ) : (
               <button
                 className={`btn ${d.realOrders?.on ? "danger" : "primary"}`}
-                disabled={teamBusy || (!!d.realOrders?.on && !inBatchWindow())}
+                disabled={teamBusy}
                 title={d.realOrders?.on ? "Starts /trade-desk live in Claude Code: the team prepares today's IBKR batch for you to approve below. It places nothing." : "Starts /trade-desk in Claude Code: one paper cycle by the team."}
                 onClick={async () => {
                   setTeamBusy(true);
@@ -303,8 +328,9 @@ export default function DeskPage() {
                   setTeamTick((x) => x + 1);
                 }}
               >
-                {teamBusy ? <Spinner /> : d.realOrders?.on ? (inBatchWindow() ? "Run desk now · prepare IBKR batch" : "IBKR batch: 9:46 AM–3 PM New York") : "Run desk now · team cycle"}
+                {teamBusy ? <Spinner /> : d.realOrders?.on ? "Run desk now · prepare IBKR batch" : "Run desk now · team cycle"}
               </button>
+              )}
               <div className="tr-card">
                 {!!d.realOrders?.autoBatch?.length && <NextRunCountdown times={d.realOrders.autoBatch} />}
                 <TeamRunStatus tick={teamTick} />
@@ -313,13 +339,6 @@ export default function DeskPage() {
           ) : (
             <button className="btn primary" onClick={run} disabled={running}>{running ? <><Spinner /> Running desk…</> : "Run desk now"}</button>
           )}
-          <label className="dk-auto">
-            <input type="checkbox" checked={auto} onChange={toggleAuto} /> {d.driver === "team" ? "Manage paper positions every 5 min" : "Auto every 5 min"}
-          </label>
-          <div className="muted small">
-            Last run {fmt.ago(d.lastRunAt)}
-            {nextRunIn !== undefined && !running ? ` · next in ${Math.ceil(nextRunIn / 60_000)}m` : ""}
-          </div>
         </div>
       </section>
 
@@ -364,9 +383,19 @@ export default function DeskPage() {
               <div className="row" style={{ marginBottom: 8 }}>
                 <h2 style={{ margin: 0 }}>✦ Trading floor</h2>
                 <span className="spacer" />
-                <span className="small muted">{shown ? new Date(shown.startedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""} · pick another session in the list below</span>
+                {floorIdle ? (
+                  <span className="small muted">Closed · {d.market.reason} · pick a session in the list below to replay it</span>
+                ) : (
+                  <>
+                    <span className="small muted">{shown ? new Date(shown.startedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""} · pick another session in the list below</span>
+                    {replay && !d.market.open && !teamLive && <button className="btn ghost" onClick={() => { setReplay(false); setPick(undefined); }}>Close replay</button>}
+                  </>
+                )}
               </div>
-              <TradingFloor session={shown?.id} />
+              <TradingFloor
+                session={shown?.id}
+                idle={floorIdle ? { title: `Market closed · ${d.market.reason}`, note: "No team run is going, so the floor is off the clock. The team's real messages come back with the next run.", onReplay: saved.length ? () => setReplay(true) : undefined } : undefined}
+              />
             </section>
           )}
           <section className="panel" style={{ marginTop: 14 }}>
@@ -388,7 +417,7 @@ export default function DeskPage() {
                 </select>
               )}
               {!allCc && saved.length > 1 && !(running && live) && (
-                <select className="as-pick" value={shown?.id} onChange={(e) => setPick(e.target.value)}>
+                <select className="as-pick" value={shown?.id} onChange={(e) => { setPick(e.target.value); setReplay(true); }}>
                   {saved.map((x) => (
                     <option key={x.id} value={x.id}>
                       {new Date(x.startedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · {x.model === TEAM_MODEL ? "trade team" : `${x.toolCalls} tools`} · {x.status}
@@ -660,7 +689,7 @@ export default function DeskPage() {
 
 
       <p className="disclaimer">
-        Paper trading only: the desk never sends an order to a broker. Fills are simulated from Yahoo&apos;s delayed 5-minute bars with 0.05% slippage and a $0.35 commission each way; a real stop can fill worse in a fast market. Past paper results don&apos;t promise future ones. Not financial advice.
+        Paper trading only: the desk never sends an order to a broker. Fills are simulated from Yahoo&apos;s delayed 5-minute bars with 0.05% slippage and a $0.35 commission each way; a real stop can fill worse in a fast market. Past paper results don&apos;t promise future ones. Not financial advice. <ChartCredit />
       </p>
     </main>
   );

@@ -1,7 +1,8 @@
 // Pure: candlestick charts as SVG for the trade team's chart analyst (trade-chartist), who looks at
 // them as images, the way a trader reads a chart. Three panels: daily (60 sessions, 20/50-day
-// averages), 15-minute (last 5 sessions, VWAP) and 5-minute today (VWAP, opening range, prior day's
-// high and low, and the plan's trigger, stop and target). Plus the numbers a chart reader wants.
+// averages, SPY scaled to the stock, earnings and SEC filing days), 15-minute (last 5 sessions, VWAP)
+// and 5-minute today (VWAP, opening range, prior day's high and low, one ATR under the trigger, and
+// the plan's trigger, stop and target). Plus the numbers a chart reader wants.
 import type { IntradayBar } from "./setups";
 import { nyClock } from "./setups";
 import type { Bar } from "./types";
@@ -35,6 +36,55 @@ export interface ChartFacts {
   roomToResistance?: { level: number; label: string; pct: number }; // nearest level above the trigger (or the last price)
   sma20?: number;
   sma50?: number;
+  atr14?: number; // average daily true range, last 14 sessions
+  stopInAtr?: number; // (trigger, or the last price) − stop, in ATRs: under 0.5 is inside one ordinary day's noise
+  vsSpy?: { stock20d: number; spy20d: number; diff: number }; // 20-session % change, and the stock's lead over SPY in points
+  nextEarnings?: { date: string; tradingDays?: number; estimated?: boolean };
+  events?: ChartEvent[]; // earnings and SEC filings inside the daily panel's 60 sessions, newest first
+}
+
+/** A dated event drawn on the daily panel: an earnings date or an SEC filing. */
+export interface ChartEvent {
+  date: string; // YYYY-MM-DD
+  kind: "earnings" | "8-K" | "10-Q" | "10-K" | "filing";
+  label: string; // "8-K · results of operations"
+}
+
+/** What the chart can add from other sources: SPY's daily bars, Yahoo's next earnings date and SEC filings. */
+export interface ChartContext {
+  spy?: Bar[];
+  nextEarnings?: string;
+  earningsEstimated?: boolean;
+  events?: ChartEvent[];
+  tradingDays?: (from: string, to: string) => number; // lib/clock's tradingDaysBetween
+}
+
+/** SEC filings → chart events: an 8-K with item 2.02 (results of operations) is an earnings release. */
+export function filingEvents(filings: Array<{ form: string; filed: string; items: string[]; labels: string[] }>): ChartEvent[] {
+  return filings.map((f) => {
+    const form = f.form.replace(/\/A$/, "");
+    const kind: ChartEvent["kind"] = form === "8-K" && f.items.includes("2.02") ? "earnings" : form === "8-K" || form === "10-Q" || form === "10-K" ? form : "filing";
+    return { date: f.filed, kind, label: `${f.form}${f.labels.length ? ` · ${f.labels.join(", ")}` : ""}` };
+  });
+}
+
+/** Average true range over the last `n` daily bars (simple mean). */
+export function atr(daily: Bar[], n = 14): number | undefined {
+  if (daily.length < n + 1) return undefined;
+  let s = 0;
+  for (let i = daily.length - n; i < daily.length; i++) {
+    const b = daily[i], pc = daily[i - 1].close;
+    s += Math.max(b.high - b.low, Math.abs(b.high - pc), Math.abs(b.low - pc));
+  }
+  return s / n;
+}
+
+/** % change over the last `n` sessions of `bars`, ending on or before `date`. */
+function change(bars: Bar[], n: number, date?: string): number | undefined {
+  const upTo = date ? bars.filter((b) => b.time <= date) : bars;
+  if (upTo.length < n + 1) return undefined;
+  const a = upTo[upTo.length - 1 - n].close, b = upTo[upTo.length - 1].close;
+  return a > 0 ? (b / a - 1) * 100 : undefined;
 }
 
 const sma = (xs: number[], n: number, i: number) => (i + 1 >= n ? xs.slice(i + 1 - n, i + 1).reduce((a, b) => a + b, 0) / n : undefined);
@@ -75,7 +125,7 @@ const hhmm = (t: number) => {
   return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
 };
 
-export function chartFacts(daily: Bar[], intraday: IntradayBar[], plan: ChartPlan = {}): ChartFacts {
+export function chartFacts(daily: Bar[], intraday: IntradayBar[], plan: ChartPlan = {}, ctx: ChartContext = {}): ChartFacts {
   const ses = sessions(intraday);
   const today = ses[ses.length - 1];
   const prev = ses[ses.length - 2];
@@ -101,6 +151,13 @@ export function chartFacts(daily: Bar[], intraday: IntradayBar[], plan: ChartPla
   ].filter((x): x is { level: number; label: string } => !!x && x.level > ref);
   const nearest = levels.sort((a, b) => a.level - b.level)[0];
   const r2 = (x?: number) => (x === undefined ? undefined : Math.round(x * 100) / 100);
+  const a14 = atr(past);
+  const stopRef = plan.trigger ?? last;
+  const lastDate = daily[daily.length - 1]?.time;
+  const s20 = change(daily, 20), p20 = ctx.spy ? change(ctx.spy, 20, lastDate) : undefined;
+  const firstDate = daily.slice(-60)[0]?.time ?? "";
+  const asOf = todayDate ?? lastDate ?? "";
+  const earn = ctx.nextEarnings && ctx.nextEarnings >= asOf ? { date: ctx.nextEarnings, tradingDays: ctx.tradingDays && asOf ? ctx.tradingDays(asOf, ctx.nextEarnings) : undefined, estimated: ctx.earningsEstimated } : undefined;
   return {
     session: today?.date,
     last: r2(last)!,
@@ -113,12 +170,17 @@ export function chartFacts(daily: Bar[], intraday: IntradayBar[], plan: ChartPla
     roomToResistance: nearest && { level: r2(nearest.level)!, label: nearest.label, pct: Math.round(((nearest.level - ref) / ref) * 10_000) / 100 },
     sma20: r2(sma(closes, 20, closes.length - 1)),
     sma50: r2(sma(closes, 50, closes.length - 1)),
+    atr14: r2(a14),
+    stopInAtr: a14 && plan.stop !== undefined && stopRef > plan.stop ? r2((stopRef - plan.stop) / a14) : undefined,
+    vsSpy: s20 !== undefined && p20 !== undefined ? { stock20d: r2(s20)!, spy20d: r2(p20)!, diff: r2(s20 - p20)! } : undefined,
+    nextEarnings: earn,
+    events: (ctx.events ?? []).filter((e) => e.date >= firstDate && e.date <= asOf).sort((a, b) => b.date.localeCompare(a.date)),
   };
 }
 
 // ---------------------------------------------------------------- drawing
 
-const C = { bg: "#0f1115", grid: "#232733", text: "#9aa3b2", up: "#3ecf8e", down: "#ef5d5d", vwap: "#f0b429", sma20: "#7aa7ff", sma50: "#c792ea", trigger: "#f0b429", stop: "#ef5d5d", target: "#3ecf8e", level: "#8b93a5", or: "#5ec4d6" };
+const C = { bg: "#0f1115", grid: "#232733", text: "#9aa3b2", up: "#3ecf8e", down: "#ef5d5d", vwap: "#f0b429", sma20: "#7aa7ff", sma50: "#c792ea", trigger: "#f0b429", stop: "#ef5d5d", target: "#3ecf8e", level: "#8b93a5", or: "#5ec4d6", atr: "#ff9f43", spy: "#b8bfcc", event: "#ff7ad9" };
 const esc = (s: string) => s.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]!);
 
 interface Line {
@@ -128,7 +190,13 @@ interface Line {
   dash?: boolean;
 }
 
-function panel(x0: number, y0: number, w: number, h: number, title: string, candles: Candle[], lines: Line[], overlays: Array<{ values: Array<number | undefined>; color: string }>): string {
+interface Mark {
+  i: number; // candle index
+  label: string;
+  color: string;
+}
+
+function panel(x0: number, y0: number, w: number, h: number, title: string, candles: Candle[], lines: Line[], overlays: Array<{ values: Array<number | undefined>; color: string; dash?: boolean }>, marks: Mark[] = []): string {
   const volH = Math.round(h * 0.18);
   const ph = h - volH - 22;
   const top = y0 + 22;
@@ -167,8 +235,22 @@ function panel(x0: number, y0: number, w: number, h: number, title: string, cand
     s += `<rect x="${x(i) - bw / 2}" y="${y0 + h - vh}" width="${bw}" height="${vh}" fill="${col}" opacity="0.45"/>`;
   });
   for (const o of overlays) {
-    const pts = o.values.map((v, i) => (v === undefined ? null : `${x(i).toFixed(1)},${y(v).toFixed(1)}`)).filter(Boolean);
-    if (pts.length > 1) s += `<polyline points="${pts.join(" ")}" fill="none" stroke="${o.color}" stroke-width="1.5"/>`;
+    // a line leaving the panel's price range is cut there (it never squashes the candles or spills out)
+    const runs: string[][] = [[]];
+    o.values.forEach((v, i) => {
+      if (v === undefined || v < lo || v > hi) runs.push([]);
+      else runs[runs.length - 1].push(`${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+    });
+    for (const pts of runs) if (pts.length > 1) s += `<polyline points="${pts.join(" ")}" fill="none" stroke="${o.color}" stroke-width="1.5" ${o.dash ? 'stroke-dasharray="4,3"' : ""}/>`;
+  }
+  // dated events: a vertical line through the day, labelled at the top (stacked when close together)
+  let lastX = -1e9, row = 0;
+  for (const m of [...marks].sort((a, b) => a.i - b.i)) {
+    if (m.i < 0 || m.i >= candles.length) continue;
+    row = x(m.i) - lastX < 70 ? (row + 1) % 3 : 0;
+    lastX = x(m.i);
+    s += `<line x1="${x(m.i)}" x2="${x(m.i)}" y1="${top}" y2="${y0 + h}" stroke="${m.color}" stroke-width="1" stroke-dasharray="2,3" opacity="0.9"/>`;
+    s += `<text x="${x(m.i) + 3}" y="${top + 11 + row * 11}" fill="${m.color}" font-size="10" font-weight="600">${esc(m.label)}</text>`;
   }
   for (const l of lines) {
     if (!Number.isFinite(l.y)) continue;
@@ -184,9 +266,9 @@ function panel(x0: number, y0: number, w: number, h: number, title: string, cand
   return s;
 }
 
-export function chartSvg(symbol: string, daily: Bar[], intraday: IntradayBar[], plan: ChartPlan = {}): string {
+export function chartSvg(symbol: string, daily: Bar[], intraday: IntradayBar[], plan: ChartPlan = {}, ctx: ChartContext = {}): string {
   const W = 1200, H = 1000;
-  const f = chartFacts(daily, intraday, plan);
+  const f = chartFacts(daily, intraday, plan, ctx);
   const d = daily.slice(-60);
   const closes = daily.map((x) => x.close);
   const off = daily.length - d.length;
@@ -208,12 +290,31 @@ export function chartSvg(symbol: string, daily: Bar[], intraday: IntradayBar[], 
     f.priorDay && { y: f.priorDay.low, color: C.level, label: "PDL", dash: true },
   ] as Array<Line | false | undefined>).filter((x): x is Line => !!x);
   const orLines: Line[] = f.openingRange ? [{ y: f.openingRange.high, color: C.or, label: "OR high", dash: true }, { y: f.openingRange.low, color: C.or, label: "OR low", dash: true }] : [];
+  // one ordinary day's range under the trigger (or the price): a stop above this line sits inside daily noise
+  const atrLine: Line[] = f.atr14 && plan.stop !== undefined ? [{ y: (plan.trigger ?? f.last) - f.atr14, color: C.atr, label: "1 ATR", dash: true }] : [];
+  // SPY, scaled to start where the stock starts, so the gap between the two lines is relative strength
+  const spyBy = new Map((ctx.spy ?? []).map((b) => [b.time, b.close]));
+  const spy0 = d.map((b) => spyBy.get(b.time)).find((v) => v !== undefined);
+  const k = spy0 && d[0] ? d[0].close / spy0 : undefined;
+  const spyLine = k ? d.map((b) => (spyBy.has(b.time) ? spyBy.get(b.time)! * k : undefined)) : undefined;
+  const idx = new Map(d.map((b, i) => [b.time, i]));
+  const marks: Mark[] = (f.events ?? []).flatMap((e) => {
+    // a filing on a non-trading day goes on the next session in the panel
+    const i = idx.get(e.date) ?? d.findIndex((b) => b.time > e.date);
+    return i >= 0 ? [{ i, label: e.kind === "earnings" ? "EARNINGS" : e.kind, color: e.kind === "earnings" || e.kind === "8-K" ? C.event : C.level }] : [];
+  });
+  const extras = [
+    f.atr14 !== undefined && `ATR ${f.atr14.toFixed(2)}`,
+    f.vsSpy && `20d ${f.vsSpy.stock20d >= 0 ? "+" : ""}${f.vsSpy.stock20d.toFixed(1)}% vs SPY ${f.vsSpy.spy20d >= 0 ? "+" : ""}${f.vsSpy.spy20d.toFixed(1)}%`,
+    f.nextEarnings && `earnings ${f.nextEarnings.date}${f.nextEarnings.tradingDays !== undefined ? ` (${f.nextEarnings.tradingDays} sessions)` : ""}${f.nextEarnings.estimated ? " est." : ""}`,
+  ].filter(Boolean);
   let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="Helvetica, Arial, sans-serif"><rect width="${W}" height="${H}" fill="${C.bg}"/>`;
-  s += panel(0, 0, W, 330, `${symbol} · daily, 60 sessions · blue 20-day avg, purple 50-day avg`, dc, [...dayLines.filter((l) => l.label !== "PDL"), ...planLines], [
+  s += panel(0, 0, W, 330, `${symbol} · daily, 60 sessions · blue 20d avg, purple 50d avg${spyLine ? ", gray dashed SPY (scaled)" : ""}${extras.length ? ` · ${extras.join(" · ")}` : ""}`, dc, [...dayLines.filter((l) => l.label !== "PDL"), ...planLines], [
     { values: d.map((_, i) => sma(closes, 20, off + i)), color: C.sma20 },
     { values: d.map((_, i) => sma(closes, 50, off + i)), color: C.sma50 },
-  ]);
+    ...(spyLine ? [{ values: spyLine, color: C.spy, dash: true }] : []),
+  ], marks);
   s += panel(0, 335, W, 300, `${symbol} · 15-minute, last 5 sessions · yellow VWAP`, c15, [...dayLines, ...planLines], [{ values: c15.map((c) => c.vwap), color: C.vwap }]);
-  s += panel(0, 640, W, 360, `${symbol} · 5-minute, ${today?.date ?? "no session"} · yellow VWAP · cyan opening range (first 15 min)`, c5, [...dayLines, ...orLines, ...planLines], [{ values: c5.map((c) => c.vwap), color: C.vwap }]);
+  s += panel(0, 640, W, 360, `${symbol} · 5-minute, ${today?.date ?? "no session"} · yellow VWAP · cyan opening range (first 15 min)${atrLine.length ? ` · orange 1 ATR under the ${plan.trigger !== undefined ? "trigger" : "price"}${f.stopInAtr !== undefined ? ` (stop is ${f.stopInAtr.toFixed(2)} ATR away)` : ""}` : ""}`, c5, [...dayLines, ...orLines, ...atrLine, ...planLines], [{ values: c5.map((c) => c.vwap), color: C.vwap }]);
   return s + "</svg>";
 }

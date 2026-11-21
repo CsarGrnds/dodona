@@ -52,6 +52,40 @@ test("chart: sessions, facts and an SVG with the plan's lines", () => {
   assert.match(svg, /OR high/);
 });
 
+test("chart: ATR, the stop in ATRs, strength vs SPY, earnings and filings", async () => {
+  const { atr, filingEvents } = await import("../lib/chart");
+  const day = (i: number) => new Date(Date.UTC(2026, 6, 1) + i * 86_400_000).toISOString().slice(0, 10);
+  // 70 days, the stock rising 1% a day for the last 20, SPY flat; each bar 1.00 high-low
+  const daily = Array.from({ length: 70 }, (_, i) => {
+    const c = i < 50 ? 10 : 10 * 1.01 ** (i - 49);
+    return { time: day(i), open: c, high: c + 0.5, low: c - 0.5, close: c, volume: 1e6 };
+  });
+  const spy = daily.map((b) => ({ ...b, open: 500, high: 501, low: 499, close: 500 }));
+  assert.equal(atr(daily.slice(0, 40)), 1); // flat closes: the true range is the bar's range
+  const filings = filingEvents([
+    { form: "8-K", filed: day(60), items: ["2.02", "9.01"], labels: ["Results of operations"] },
+    { form: "10-Q", filed: day(61), items: [], labels: [] },
+    { form: "8-K", filed: day(5), items: ["5.02"], labels: ["Officer change"] }, // before the 60-session window
+  ]);
+  assert.deepEqual(filings.map((e) => e.kind), ["earnings", "10-Q", "8-K"]);
+  const ctx = { spy, nextEarnings: day(80), earningsEstimated: true, events: filings, tradingDays: () => 7 };
+  const f = chartFacts(daily, [], { trigger: 12.3, stop: 11.8 }, ctx);
+  assert.equal(f.atr14, 1); // each day's 1.00 range covers the 1% gaps
+  assert.equal(f.stopInAtr, 0.5); // (12.30 − 11.80) / 1.00
+  assert.ok(f.vsSpy && f.vsSpy.spy20d === 0 && f.vsSpy.diff === f.vsSpy.stock20d && f.vsSpy.stock20d > 20);
+  assert.deepEqual(f.nextEarnings, { date: day(80), tradingDays: 7, estimated: true });
+  assert.deepEqual(f.events?.map((e) => e.date), [day(61), day(60)]); // in the window, newest first
+  const svg = chartSvg("X", daily, [], { trigger: 12.3, stop: 11.8 }, ctx);
+  assert.match(svg, /EARNINGS/);
+  assert.match(svg, /SPY \(scaled\)/);
+  assert.match(svg, /vs SPY \+0\.0%/);
+  // nothing from outside: no SPY, no events, no earnings
+  const bare = chartFacts(daily, [], {});
+  assert.equal(bare.vsSpy, undefined);
+  assert.equal(bare.stopInAtr, undefined);
+  assert.deepEqual(bare.events, []);
+});
+
 test("pending: a formed range still under its high, above VWAP; broken or weak ones say why", async () => {
   const { pendingRange, isPending } = await import("../lib/pending");
   const now = Date.parse("2026-11-18T15:05:00Z"); // 10:05 New York: 6 completed bars

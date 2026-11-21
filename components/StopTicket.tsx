@@ -4,6 +4,7 @@
 // One-click approval is on). IBKR's own questions come back here for you to answer.
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { StopChart } from "@/components/StopChart";
 import { Spinner } from "@/components/ui";
 import type { PlaceResult, StopTicketView } from "@/lib/data/ibkrOrders";
 
@@ -77,6 +78,7 @@ export function StopTicket({ symbol, suggested, price, noLoss, onClose, onSent }
       </div>
 
       {busy === "load" && !t && <div className="muted small"><Spinner /> Reading the position and its stop at IBKR…</div>}
+      <StopChart symbol={symbol} current={t?.change?.from} next={Number(to) > 0 ? Number(to) : t?.change?.to} cost={t?.avgCost} />
       {t && t.lines.length > 0 && <div className="ib-ticket">{t.lines.join("\n")}</div>}
       {t && t.problems.length > 0 && (
         <ul className="ib-problems small">

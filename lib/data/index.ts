@@ -61,6 +61,12 @@ export async function getMarketBars(): Promise<Bar[]> {
   return getDailyHistory("SPY");
 }
 
+/** Yahoo's fundamentals (next earnings date, …), cached like the snapshot's. */
+export async function getFundamentals(symbol: string): Promise<Fundamentals> {
+  if (MOCK) return mockSnapshot(symbol).fundamentals;
+  return cached(`fund:${symbol}`, 6 * 60 * MIN, () => yahooFundamentals(symbol));
+}
+
 /** ~3 years of daily bars for track records. */
 export async function getDailyHistory(symbol: string): Promise<Bar[]> {
   if (MOCK) return mockSnapshot(symbol).bars;
