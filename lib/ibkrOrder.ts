@@ -147,7 +147,9 @@ export interface StopChange {
   qty: number; // the shares the stop sells
   to: number; // the new stop
   from?: number; // the stop at IBKR now; none = a new stop order
-  orderId?: string;
+  orderId?: string; // modify this order in place
+  // a fractional stop IBKR's API won't modify: Dodona cancels it, then places a new whole-share stop
+  replaces?: { orderId: string; qty: number };
   tif: "GTC" | "DAY";
 }
 
@@ -179,9 +181,14 @@ export function planStopChange(symbol: string, toRaw: number, f: StopFacts): { o
     if (!(cur.stop! > 0)) return { ok: false, reason: `Couldn't read the price of ${sym}'s stop order.` };
     if (to <= cur.stop!) return { ok: false, reason: `Stops only move up: $${to.toFixed(2)} isn't above the current $${cur.stop!.toFixed(2)}.` };
     if (cur.qty > f.shares + 1e-6) return { ok: false, reason: `The stop order sells ${cur.qty} shares but you hold ${f.shares}; fix it in IBKR.` };
-    // IBKR's API refuses to modify an order for a fractional quantity ("Fractional quantity is not supported for this modification")
-    if (!Number.isInteger(cur.qty)) return { ok: false, reason: `${sym}'s stop sells ${+cur.qty.toFixed(4)} shares, a fraction, and IBKR doesn't let Dodona change a fractional order. Raise it to $${to.toFixed(2)} in IBKR (TWS, IBKR Mobile or the Client Portal).` };
     const tif = cur.tif.toUpperCase() === "DAY" ? "DAY" : "GTC";
+    // IBKR's API refuses to modify an order for a fractional quantity ("Fractional quantity is not supported for this
+    // modification"), so it's replaced: the old one is canceled, then a new stop for the whole shares is sent
+    if (!Number.isInteger(cur.qty)) {
+      const qty = Math.floor(Math.min(cur.qty, f.shares) + 1e-9);
+      if (qty < 1) return { ok: false, reason: `${sym}'s stop sells less than one whole share; raise it to $${to.toFixed(2)} in IBKR.` };
+      return { ok: true, change: { symbol: sym, qty, to, from: cur.stop, replaces: { orderId: cur.orderId, qty: cur.qty }, tif } };
+    }
     return { ok: true, change: { symbol: sym, qty: cur.qty, to, from: cur.stop, orderId: cur.orderId, tif } };
   }
   const qty = Math.floor(f.shares + 1e-9);
@@ -202,12 +209,15 @@ export function stopTicketLines(c: StopChange, account: string, paper: boolean, 
     `${paper ? "PAPER" : "LIVE"} account ${account}, Interactive Brokers`,
     c.orderId
       ? `CHANGE stop order #${c.orderId}: SELL ${+c.qty.toFixed(4)} ${c.symbol} STOP $${c.from!.toFixed(2)} → $${c.to.toFixed(2)}, ${c.tif === "GTC" ? "good till canceled" : "good for today"}`
-      : `NEW SELL ${c.qty} ${c.symbol} STOP $${c.to.toFixed(2)}, good till canceled`,
+      : c.replaces
+        ? `REPLACE stop order #${c.replaces.orderId} (SELL ${+c.replaces.qty.toFixed(4)} ${c.symbol} STOP $${c.from!.toFixed(2)}, a fraction IBKR's API can't change): NEW SELL ${c.qty} ${c.symbol} STOP $${c.to.toFixed(2)}, ${c.tif === "GTC" ? "good till canceled" : "good for today"}, after canceling #${c.replaces.orderId}`
+        : `NEW SELL ${c.qty} ${c.symbol} STOP $${c.to.toFixed(2)}, good till canceled`,
     `if it fills at $${c.to.toFixed(2)}: $${(c.qty * (f.price - c.to)).toFixed(2)} below today's $${f.price.toFixed(2)}${costNote}`,
     "a stop is an order, not a promise: a gap can fill below it",
   ];
   const left = +(f.shares - c.qty).toFixed(4);
-  if (!c.orderId && left > 0) out.push(`${left} fractional share${left === 1 ? "" : "s"} stay without a stop`);
+  if (!c.orderId && left > 0) out.push(`${left} fractional share${left === 1 ? "" : "s"} stay without a stop (IBKR's API takes no fractional orders: to cover ${left === 1 ? "it" : "them"}, edit the stop's quantity in IBKR)`);
+  if (c.replaces) out.push(`the old stop is canceled first (IBKR won't hold two sell stops in a cash account), then the new one is sent: for those seconds, or until you answer an IBKR question, ${c.symbol} has no stop. If the new one fails, Dodona says so and texts you`);
   return out;
 }
 

@@ -89,7 +89,7 @@ export function StopTicket({ symbol, suggested, price, noLoss, onClose, onSent }
         <div className="ib-place">
           {t.oneClick ? (
             <button className={`btn ${live ? "danger" : "primary"}`} disabled={!!busy} onClick={() => place(true)} title="One-click approval is on (Settings → Broker). Every other gate still applies.">
-              {busy === "place" ? <Spinner /> : `Send to IBKR: ${t.change.orderId ? "raise" : "set"} ${symbol} stop to $${t.change.to.toFixed(2)} ${live ? "(REAL money)" : "(paper)"}`}
+              {busy === "place" ? <Spinner /> : `Send to IBKR: ${t.change.orderId ? "raise" : t.change.replaces ? `replace ${symbol} stop: ${t.change.qty} shares at` : "set"}${t.change.replaces ? "" : ` ${symbol} stop to`} $${t.change.to.toFixed(2)} ${live ? "(REAL money)" : "(paper)"}`}
             </button>
           ) : (
             <>
