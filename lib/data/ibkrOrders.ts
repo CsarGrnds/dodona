@@ -28,6 +28,7 @@ import type { OpenOrder } from "@/lib/prep";
 import { nyClock } from "@/lib/setups";
 import { configPath } from "./desk";
 import { accountId, call, GatewayError, gatewayStatus, openOrders } from "./ibkr";
+import { notifyUser } from "./liveRun";
 import { orderFingerprint } from "./paper";
 
 const root = (p: string) => resolve(process.cwd(), "trader", p);
@@ -416,7 +417,7 @@ async function positionFor(account: string, symbol: string): Promise<{ shares: n
   return undefined;
 }
 
-const stopFingerprint = (c: StopChange) => createHash("sha256").update(`stop|${c.symbol}|${c.orderId ?? "new"}|${c.qty}|${c.to.toFixed(2)}`).digest("hex").slice(0, 16);
+const stopFingerprint = (c: StopChange) => createHash("sha256").update(`stop|${c.symbol}|${c.orderId ?? (c.replaces ? `replace:${c.replaces.orderId}` : "new")}|${c.qty}|${c.to.toFixed(2)}`).digest("hex").slice(0, 16);
 
 export async function stopTicket(input: { symbol: string; to: number; noLoss: boolean; price?: number }, nowMs = Date.now()): Promise<StopTicketView & { conid?: number }> {
   const symbol = String(input.symbol ?? "").trim().toUpperCase();
@@ -474,7 +475,7 @@ async function finishStop(ans: PlaceAnswer, ctx: StopCtx, res: PlaceResult) {
   const base = { fingerprint: ctx.fingerprint, symbol: c.symbol, side: "sell", qty: String(c.qty), kind: "stop", stop: c.to, paper: ctx.paper, account: ctx.account };
   if (ans.error) {
     await log({ ...base, status: "failed", note: ans.error });
-    res.failed.push({ symbol: c.symbol, error: ans.error });
+    res.failed.push({ symbol: c.symbol, error: c.replaces ? unprotected(c, ans.error) : ans.error });
     return;
   }
   for (const q of ans.questions) {
@@ -483,9 +484,46 @@ async function finishStop(ans: PlaceAnswer, ctx: StopCtx, res: PlaceResult) {
     res.questions.push({ id: q.id, symbol: c.symbol, messages: q.messages });
   }
   if (ans.placed.length) {
-    await log({ ...base, status: "stop-changed", plain: c.orderId ? `stop ${c.from} → ${c.to}` : `new stop ${c.to}`, broker_order_id: ans.placed.map((p) => p.orderId).join(",") });
+    await log({ ...base, status: "stop-changed", plain: c.orderId ? `stop ${c.from} → ${c.to}` : c.replaces ? `new stop ${c.to} replacing #${c.replaces.orderId} (${c.from})` : `new stop ${c.to}`, broker_order_id: ans.placed.map((p) => p.orderId).join(",") });
     res.placed.push({ symbol: c.symbol, orderIds: ans.placed.map((p) => p.orderId) });
   }
+}
+
+/** The old fractional stop is canceled but the new one didn't go in: the holding has no stop. Said loudly, also by text. */
+function unprotected(c: StopChange, why: string): string {
+  const msg = `${c.symbol} has NO stop now: Dodona canceled the old stop ($${c.from}) but IBKR didn't take the new one at $${c.to.toFixed(2)} (${why}). Set it again from Today or in IBKR.`;
+  notifyUser("Dodona: a holding has no stop", msg);
+  return msg;
+}
+
+/** IBKR's answer to a cancel: ok, or why not. */
+async function cancelOrder(account: string, orderId: string): Promise<string | undefined> {
+  try {
+    const r = await call<Record<string, unknown>>("DELETE", `/v1/api/iserver/account/${encodeURIComponent(account)}/order/${encodeURIComponent(orderId)}`, 20_000);
+    return r && typeof r.error === "string" ? r.error : undefined;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
+/**
+ * The first half of replacing a fractional stop. In a cash account IBKR refuses a second sell stop while
+ * the old one rests (together they'd sell more than you hold, a short), so the old one is canceled first,
+ * and Dodona waits until IBKR no longer lists it. Returns why not, if it couldn't (then nothing changed).
+ */
+async function cancelReplacedStop(ctx: StopCtx): Promise<string | undefined> {
+  const old = ctx.change.replaces!;
+  const err = await cancelOrder(ctx.account, old.orderId);
+  if (err) return `IBKR wouldn't cancel the old stop #${old.orderId} (${err}); nothing changed`;
+  for (let i = 0; i < 10; i++) {
+    const open = await openOrders().catch(() => undefined);
+    if (open && !open.some((o) => o.orderId === old.orderId)) {
+      await log({ fingerprint: ctx.fingerprint, symbol: ctx.change.symbol, side: "sell", kind: "stop", status: "canceled", qty: String(old.qty), stop: ctx.change.from, broker_order_id: old.orderId, reply: `canceled to replace it with a stop at ${ctx.change.to}`, paper: ctx.paper, account: ctx.account });
+      return undefined;
+    }
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  return `IBKR still lists the old stop #${old.orderId} as open after the cancel; check it in IBKR`;
 }
 
 /** Send one stop ticket. Only from Dodona's page, on the user's click there (and their typed confirmation unless One-click approval is on). */
@@ -503,8 +541,18 @@ export async function placeStopTicket(input: { symbol: string; to: number; noLos
     const ctx: StopCtx = { change: c, fingerprint: t.fingerprint, account: t.account, paper: isPaperAccount(t.account), at: Date.now() };
     await log({ fingerprint: ctx.fingerprint, symbol: c.symbol, side: "sell", qty: String(c.qty), kind: "stop", stop: c.to, plain: t.lines[1], status: "approved", reply: clicked ? `approved with one click in Dodona (${t.confirm})` : `typed "${input.typed.trim()}" and clicked Send in Dodona`, paper: ctx.paper, account: ctx.account });
     await call("GET", "/v1/api/iserver/accounts").catch(() => undefined);
+    const conid = t.conid ?? (await conidFor(c.symbol).catch(() => undefined));
+    if (!conid) return { ...res, failed: [{ symbol: c.symbol, error: "IBKR didn't return the contract id" }], note: `Failed: IBKR didn't return ${c.symbol}'s contract id; nothing changed.` };
+    if (c.replaces) {
+      const why = await cancelReplacedStop(ctx);
+      if (why) {
+        await log({ fingerprint: ctx.fingerprint, symbol: c.symbol, side: "sell", kind: "stop", status: "failed", note: why, account: ctx.account, paper: ctx.paper });
+        const stuck = why.startsWith("IBKR still lists");
+        if (stuck) notifyUser("Dodona: check a stop in IBKR", `${c.symbol}: ${why}. The new stop at $${c.to.toFixed(2)} was not sent.`);
+        return { ...res, failed: [{ symbol: c.symbol, error: why }], note: stuck ? `Not sent: ${why}. The cancel may still go through, so ${c.symbol} may have no stop.` : `Not sent: ${why}.` };
+      }
+    }
     try {
-      const conid = t.conid ?? (await conidFor(c.symbol));
       const a = encodeURIComponent(t.account);
       const raw = c.orderId
         ? await call<unknown>("POST", `/v1/api/iserver/account/${a}/order/${encodeURIComponent(c.orderId)}`, 20_000, ibkrStopOrder(c, t.account, conid))
@@ -513,9 +561,13 @@ export async function placeStopTicket(input: { symbol: string; to: number; noLos
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       await log({ fingerprint: ctx.fingerprint, symbol: c.symbol, side: "sell", kind: "stop", status: "failed", note: error, account: ctx.account, paper: ctx.paper });
-      res.failed.push({ symbol: c.symbol, error });
+      res.failed.push({ symbol: c.symbol, error: c.replaces ? unprotected(c, error) : error });
     }
-    res.note = res.placed.length ? `Sent to IBKR: ${c.symbol} stop ${c.orderId ? `raised to` : "set at"} $${c.to.toFixed(2)}.` : res.questions.length ? "IBKR asks you to confirm first." : res.failed.length ? `Failed: ${res.failed[0].error}` : "";
+    res.note = res.placed.length
+      ? `Sent to IBKR: ${c.symbol} stop ${c.orderId ? `raised to` : c.replaces ? `replaced: ${c.qty} shares at` : "set at"} $${c.to.toFixed(2)}${c.replaces ? ` (the old stop #${c.replaces.orderId} is canceled)` : ""}.`
+      : res.questions.length
+        ? c.replaces ? `IBKR asks you to confirm first. ${c.symbol}'s old stop is already canceled: it has no stop until you answer yes.` : "IBKR asks you to confirm first."
+        : res.failed.length ? `Failed: ${res.failed[0].error}` : "";
     res.ok = !res.failed.length;
     return res;
   } finally {
@@ -525,14 +577,15 @@ export async function placeStopTicket(input: { symbol: string; to: number; noLos
 
 async function answerStopQuestion(input: { id: string; confirmed: boolean }, ctx: StopCtx, res: PlaceResult): Promise<PlaceResult> {
   S.stops!.delete(input.id);
-  if (Date.now() - ctx.at > 5 * 60_000) return { ...res, note: "That question has expired. Open the ticket again." };
+  const gone = ctx.change.replaces ? ` ${ctx.change.symbol} has NO stop now (the old one was canceled to replace it): open its ticket again or set it in IBKR.` : "";
+  if (Date.now() - ctx.at > 5 * 60_000) return { ...res, note: `That question has expired. Open the ticket again.${gone}` };
   if (S.busy) return { ...res, note: "Busy; try again in a moment." };
   S.busy = true;
   try {
     if (!input.confirmed) {
       await call("POST", `/v1/api/iserver/reply/${encodeURIComponent(input.id)}`, 10_000, { confirmed: false }).catch(() => undefined);
       await log({ fingerprint: ctx.fingerprint, symbol: ctx.change.symbol, side: "sell", kind: "stop", status: "declined", reply: "said no to IBKR's question", account: ctx.account, paper: ctx.paper });
-      res.note = `${ctx.change.symbol} stop not changed.`;
+      res.note = gone ? gone.trim() : `${ctx.change.symbol} stop not changed.`;
     } else {
       await finishStop(parsePlaceAnswer(await call<unknown>("POST", `/v1/api/iserver/reply/${encodeURIComponent(input.id)}`, 20_000, { confirmed: true })), ctx, res);
       res.note = res.placed.length ? `Sent to IBKR: ${ctx.change.symbol} stop at $${ctx.change.to.toFixed(2)}.` : res.questions.length ? "IBKR has another question." : res.failed.length ? `Failed: ${res.failed[0].error}` : "";

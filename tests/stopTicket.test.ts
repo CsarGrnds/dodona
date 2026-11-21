@@ -33,5 +33,28 @@ test("stop ticket: sets a new stop for whole shares; refuses what Dodona can't c
   assert.match((planStopChange("ABC", 115, { ...FACTS, stops: [...FACTS.stops, { ...FACTS.stops[0], orderId: "78" }] }) as { reason: string }).reason, /2 stop orders/);
   assert.match((planStopChange("ABC", 115, { ...FACTS, stops: [{ ...FACTS.stops[0], kind: "trail" }] }) as { reason: string }).reason, /trail order/);
   assert.match((planStopChange("ABC", 115, { ...FACTS, stops: [{ ...FACTS.stops[0], qty: 12 }] }) as { reason: string }).reason, /sells 12 shares/);
-  assert.match((planStopChange("ABC", 115, { ...FACTS, shares: 5.2842, stops: [{ ...FACTS.stops[0], qty: 5.2842 }] }) as { reason: string }).reason, /fractional order/);
+  assert.match((planStopChange("ABC", 115, { ...FACTS, shares: 0.6, stops: [{ ...FACTS.stops[0], qty: 0.6 }] }) as { reason: string }).reason, /less than one whole share/);
+});
+
+test("stop ticket: a fractional stop is replaced by a whole-share stop, then canceled", () => {
+  const f = { ...FACTS, shares: 5.2842, stops: [{ ...FACTS.stops[0], qty: 5.2842 }] };
+  const r = planStopChange("ABC", 115, f);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.deepEqual(r.change, { symbol: "ABC", qty: 5, to: 115, from: 110, replaces: { orderId: "77", qty: 5.2842 }, tif: "GTC" });
+  assert.equal(r.change.orderId, undefined); // a new order, never a modify of the fractional one
+  assert.equal(ibkrStopOrder(r.change, "U1", 42).quantity, 5);
+  const lines = stopTicketLines(r.change, "U1", false, f);
+  assert.match(lines[1], /REPLACE stop order #77 \(SELL 5\.2842 ABC STOP \$110\.00.*NEW SELL 5 ABC STOP \$115\.00, good till canceled, after canceling #77/);
+  assert.ok(lines.some((l) => /0\.2842 fractional shares stay without a stop/.test(l)));
+  assert.ok(lines.some((l) => /canceled first .* has no stop/.test(l)));
+  // still only up, and never more than held
+  assert.match((planStopChange("ABC", 105, f) as { reason: string }).reason, /only move up/);
+  // after the replace, the whole-share stop is raised in place later; IBKR's API takes no fractional order for the rest
+  const after = { ...f, stops: [{ ...f.stops[0], orderId: "88", stop: 115, qty: 5 }] };
+  assert.match((planStopChange("ABC", 115, after) as { reason: string }).reason, /only move up/);
+  const up = planStopChange("ABC", 118, after);
+  assert.ok(up.ok && up.change.orderId === "88" && up.change.qty === 5);
+  const less = planStopChange("ABC", 115, { ...f, shares: 4.5, stops: [{ ...f.stops[0], qty: 4.5 }] });
+  assert.ok(less.ok && less.change.qty === 4);
 });

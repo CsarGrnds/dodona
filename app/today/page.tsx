@@ -249,8 +249,8 @@ export default function TodayPage() {
 const ticketable = (r: PrepRow) => {
   const s = r.stop;
   if (!s || !r.price || !(s.suggested < r.price)) return false;
-  // IBKR's API can't modify a fractional order: those stops are raised in IBKR itself
-  if ((r.orders ?? []).some((o) => o.side === "SELL" && o.stop !== undefined && !Number.isInteger(o.qty))) return false;
+  // IBKR's API can't modify a fractional order: Dodona replaces it with a whole-share stop, so it needs one whole share
+  if ((r.orders ?? []).some((o) => o.side === "SELL" && o.stop !== undefined && !Number.isInteger(o.qty) && o.qty < 1)) return false;
   if (s.verdict === "raise" || s.verdict === "missing") return true;
   return s.verdict === "below-cost" && (s.current === undefined || s.suggested > s.current);
 };
@@ -305,7 +305,10 @@ function StopRow({ r, canTicket, open, onTicket }: { r: PrepRow; canTicket: bool
               <div className="small muted">{s.detail}</div>
             )}
             {canTicket && (s.verdict === "raise" || s.verdict === "below-cost") && !ticketable(r) && stops.some((o) => !Number.isInteger(o.qty)) && (
-              <div className="small muted" style={{ marginTop: 4 }}>Fractional stop: IBKR doesn&apos;t let Dodona change it, so raise it in IBKR.</div>
+              <div className="small muted" style={{ marginTop: 4 }}>A stop on less than one share: raise it in IBKR.</div>
+            )}
+            {s.verdict === "partial" && (
+              <div className="small muted" style={{ marginTop: 4 }}>IBKR&apos;s API takes no fractional orders: to cover every share, edit the stop&apos;s quantity in IBKR (TWS, IBKR Mobile or the Client Portal).</div>
             )}
             {canTicket && ticketable(r) && (
               <button className={`btn ${open ? "" : "ghost"} st-open`} onClick={onTicket} title="A ticket for IBKR: you see it in full and send it only on your yes">
