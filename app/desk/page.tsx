@@ -25,6 +25,8 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: "performance", label: "Performance" },
   { id: "journal", label: "Journal & rules" },
 ];
+// the practice ledger's own tabs: shown only in paper mode
+const PRACTICE_TABS = new Set<Tab>(["positions", "performance", "journal"]);
 const AUTO_MS = 5 * 60_000;
 const KIND: Record<JournalKind, { icon: string; cls: string; label: string }> = {
   buy: { icon: "▲", cls: "ok", label: "Buy" },
@@ -36,7 +38,7 @@ const KIND: Record<JournalKind, { icon: string; cls: string; label: string }> = 
   note: { icon: "·", cls: "", label: "Note" },
 };
 const REASON: Record<string, string> = { target: "Target", stop: "Stop", "flat-by": "Flat by", time: "Time stop", agent: "Claude closed" };
-const usd = (v?: number) => (v === undefined ? "—" : `$${v.toFixed(2)}`);
+const usd = (v?: number) => (v === undefined ? "—" : `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const tone = (v: number) => (v > 0 ? "up" : v < 0 ? "down" : "muted");
 const nyTime = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 const nyDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -161,11 +163,11 @@ export default function DeskPage() {
 
   // auto: a desk cycle every 5 minutes while this page is open
   useEffect(() => {
-    if (!auto) return;
+    if (!auto || d?.practice === false) return; // practice cycles only in paper mode
     run();
     const id = setInterval(run, AUTO_MS);
     return () => clearInterval(id);
-  }, [auto, run]);
+  }, [auto, run, d?.practice]);
   useEffect(() => {
     if (!running) return;
     const started = Date.now();
@@ -222,6 +224,10 @@ export default function DeskPage() {
     );
 
   const st = d.stats;
+  // paper mode (Settings) decides what this page is: practice (fake money) or the real account
+  const practice = d.practice !== false;
+  const acct = d.account;
+  const tabs = practice ? TABS : TABS.filter((x) => !PRACTICE_TABS.has(x.id));
   const saved = d.sessions ?? [];
   const shown: AgentSession | undefined = running && live ? live : saved.find((x) => x.id === pick) ?? saved[0];
   const ccShown = ccList?.find((x) => x.id === ccPick) ?? ccList?.[0];
@@ -248,11 +254,16 @@ export default function DeskPage() {
       </div>
 
       {/* ---- hero */}
-      <section className={`panel dk-hero ${today ? (today.pnl >= 0 ? "green" : "red") : ""}`}>
+      {practice && <div className="paper-watermark" aria-hidden>PAPER DESK</div>}
+      <section className={`panel dk-hero ${practice ? (today ? (today.pnl >= 0 ? "green" : "red") : "") : acct ? (acct.unrealized >= 0 ? "green" : "red") : ""}`}>
         <div className="dk-hero-main">
           <div className="row" style={{ gap: 8 }}>
-            <span className="pill act" title="This panel, the charts and the history are Dodona's practice ledger: paper money, real prices.">PAPER desk</span>
-            {d.realOrders?.on && (
+            {practice ? (
+              <Link href="/settings" className="pill act" title="Paper mode is on (Settings): every number here is the practice account, fake money at real prices.">PAPER DESK · fake money</Link>
+            ) : (
+              <span className="pill bad" title="Paper mode is off (Settings): this is your real IBKR account.">Real money · IBKR</span>
+            )}
+            {d.realOrders?.on && practice && (
               <a href="#ibkr-orders" onClick={() => pickTab("today")} className={`pill ${d.realOrders.live ? "bad" : "ok"}`} title="Real orders go to Interactive Brokers from the IBKR orders panel below, only when you approve them.">
                 {d.realOrders.live ? "LIVE orders · IBKR" : "IBKR paper orders"}
               </a>
@@ -275,6 +286,29 @@ export default function DeskPage() {
             )}
             <span className={`pill ${d.market.open ? "ok" : ""}`}>{d.market.open ? "Market open" : `Market closed · ${d.market.reason}`}</span>
           </div>
+          {!practice ? (
+            acct ? (
+              <div className="dk-today">
+                <div>
+                  <div className="muted small">Account value</div>
+                  <div className="dk-big mono">{usd(acct.value)}</div>
+                  <div className="small mono muted">{acct.positions} positions · synced {fmt.ago(acct.syncedAt)}</div>
+                </div>
+                <div>
+                  <div className="muted small">Open P&amp;L</div>
+                  <div className={`dk-big mono ${tone(acct.unrealized)}`}>{signedUsd(acct.unrealized)}</div>
+                  <div className="small mono muted">on {usd(acct.invested)} invested</div>
+                </div>
+                <div>
+                  <div className="muted small">Cash</div>
+                  <div className="dk-mid mono">{usd(acct.cash)}</div>
+                  <div className="small mono muted">team budget {usd(d.rules.budget)} · max loss {usd(d.rules.max_loss_per_trade_usd)}/trade</div>
+                </div>
+              </div>
+            ) : (
+              <div className="small muted">No IBKR sync yet: log in to the gateway (say “refresh IBKR” in Claude Code) and your real account shows here.</div>
+            )
+          ) : (
           <div className="dk-today">
             <div>
               <div className="muted small">Today</div>
@@ -292,6 +326,7 @@ export default function DeskPage() {
               <div className="small mono muted">{usd(d.positions.reduce((a, p) => a + p.risk, 0))} at the stops</div>
             </div>
           </div>
+          )}
         </div>
       </section>
 
@@ -300,16 +335,22 @@ export default function DeskPage() {
         <div className="dk-runs-head">
           <h2 style={{ margin: 0 }}>✦ Team runs</h2>
           <span className="spacer" />
-          <label className="dk-auto">
-            <input type="checkbox" checked={auto} onChange={toggleAuto} /> {d.driver === "team" ? "Manage paper positions every 5 min" : "Auto every 5 min"}
-          </label>
-          <span className="muted small">
-            Last run {fmt.ago(d.lastRunAt)}
-            {nextRunIn !== undefined && !running ? ` · next in ${Math.ceil(nextRunIn / 60_000)}m` : ""}
-          </span>
+          {practice && (
+            <>
+              <label className="dk-auto">
+                <input type="checkbox" checked={auto} onChange={toggleAuto} /> {d.driver === "team" ? "Manage paper positions every 5 min" : "Auto every 5 min"}
+              </label>
+              <span className="muted small">
+                Last practice run {fmt.ago(d.lastRunAt)}
+                {nextRunIn !== undefined && !running ? ` · next in ${Math.ceil(nextRunIn / 60_000)}m` : ""}
+              </span>
+            </>
+          )}
         </div>
         <div className="dk-hero-side">
-          {d.driver === "team" ? (
+          {!practice && !d.realOrders?.on ? (
+            <div className="dk-window small muted">Real money, but sending orders to IBKR is off: turn on “Send orders to IBKR” in <Link href="/settings">Settings</Link> for the team to prepare batches.</div>
+          ) : d.driver === "team" ? (
             <>
               {d.realOrders?.on && !inBatchWindow() && !teamBusy ? (
                 <div className="dk-window small muted" title="The live run only prepares the IBKR batch inside this window; you approve it below.">
@@ -350,15 +391,15 @@ export default function DeskPage() {
       {err && <div className="err" style={{ marginTop: 12 }}>{err}</div>}
 
       <nav className="dk-tabs" aria-label="Desk sections">
-        {TABS.map((x) => (
-          <button key={x.id} className={tab === x.id ? "on" : ""} onClick={() => pickTab(x.id)}>
+        {tabs.map((x) => (
+          <button key={x.id} className={tab === x.id || (x.id === "today" && !practice && PRACTICE_TABS.has(tab)) ? "on" : ""} onClick={() => pickTab(x.id)}>
             {x.label}
             {x.id === "positions" && d.positions.length > 0 && <span className="n">{d.positions.length}</span>}
           </button>
         ))}
       </nav>
 
-      {tab === "today" && (
+      {(tab === "today" || (!practice && PRACTICE_TABS.has(tab))) && (
         <div className="dk-tab">
           {/* ---- the real-account order tickets (IBKR), off until turned on in Settings */}
           <IbkrOrderPanel />
@@ -460,7 +501,7 @@ export default function DeskPage() {
         </div>
       )}
 
-      {tab === "positions" && (
+      {tab === "positions" && practice && (
         <div className="dk-tab">
           <section className="panel">
         <section className="panel" style={{ marginTop: 14 }}>
@@ -543,7 +584,7 @@ export default function DeskPage() {
         </div>
       )}
 
-      {tab === "performance" && (
+      {tab === "performance" && practice && (
         <div className="dk-tab">
         <section className="dk-tiles" style={{ marginTop: 0 }}>
           <Tile label="Win rate" value={st.trades ? `${Math.round(st.winRate * 100)}%` : "—"} sub={`${st.trades} closed trade${st.trades === 1 ? "" : "s"}`} />
@@ -638,7 +679,7 @@ export default function DeskPage() {
         </div>
       )}
 
-      {tab === "journal" && (
+      {tab === "journal" && practice && (
         <div className="dk-tab">
           <section className="grid two">
           <div className="panel">
@@ -689,7 +730,10 @@ export default function DeskPage() {
 
 
       <p className="disclaimer">
-        Paper trading only: the desk never sends an order to a broker. Fills are simulated from Yahoo&apos;s delayed 5-minute bars with 0.05% slippage and a $0.35 commission each way; a real stop can fill worse in a fast market. Past paper results don&apos;t promise future ones. Not financial advice. <ChartCredit />
+        {practice
+          ? "Paper mode: practice with fake money; nothing here is sent to a broker. Fills are simulated from Yahoo's delayed 5-minute bars with 0.05% slippage and a $0.35 commission each way; a real stop can fill worse in a fast market. Past practice results don't promise future ones. Not financial advice. "
+          : "Real money: the team only prepares IBKR batches; an order is placed only when you approve it here. A stop is an order, not a promise: a gap can fill below it. Day trading loses most people money. Not financial advice. "}
+        <ChartCredit />
       </p>
     </main>
   );

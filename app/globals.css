@@ -624,3 +624,11 @@ details.why[open] > summary { margin-bottom: 2px; }
 .fl-closed > * { flex: 0 0 auto; }
 .fl-bar[hidden] { display: none; }
 .fl-closed .btn { justify-self: start; }
+
+/* paper mode switch (Settings) */
+.paper-switch { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.paper-switch.off { border-color: color-mix(in srgb, var(--sell) 45%, var(--line)); }
+.paper-switch input { width: 130px; }
+
+/* paper mode: a big faint watermark behind the Desk, so fake money never looks real */
+.paper-watermark { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 30; font: 800 clamp(48px, 12vw, 180px)/1 var(--sans); letter-spacing: 0.08em; color: color-mix(in srgb, var(--accent) 7%, transparent); transform: rotate(-18deg); user-select: none; }
