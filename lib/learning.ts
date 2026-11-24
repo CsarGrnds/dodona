@@ -2,6 +2,7 @@
 // plan; after the close, each one is replayed on that day's real 5-minute bars to see what it would
 // have done: never triggered, hit the target, hit the stop, or sold at the close. The review grades
 // the team's calls and adds up what works, which the coach turns into the playbook.
+import { isPending, pendingRange } from "./pending";
 import type { IntradayBar } from "./setups";
 import { nyClock } from "./setups";
 
@@ -101,4 +102,56 @@ export function learningStats(rs: Replay[]) {
     byMarketMode: by((r) => r.marketMode),
     sampleNote: rs.length < 30 ? `Only ${rs.length} candidates so far: treat any pattern as a hint, not a rule, until a bucket has 20+.` : undefined,
   };
+}
+
+// ---------------------------------------------------------------- the rule audit: data every day
+
+/** One shortlisted stock at 9:46: which live-scan rule (if any) kept it out, and what a buy-stop at its range high would have done. */
+export interface AuditRow {
+  symbol: string;
+  blockedBy: string | null; // null: the scan would have passed it
+  trigger: number;
+  stop: number;
+  outcome: Outcome;
+  R: number;
+}
+
+const plainWhy = (why: string) => (/% under the range high/.test(why) ? "too far under the range high" : why);
+
+/**
+ * Every shortlisted stock of a day, looked at the way the 9:46 scan looks (lib/pending.ts), then replayed
+ * as if bought anyway: a buy-stop at the range high, stop at the range low, target 2R, flat by the close.
+ * It tells the coach what each rule costs or saves, even on a day the team planned nothing.
+ */
+export function ruleAudit(date: string, bySymbol: Record<string, IntradayBar[]>, flatByMinute = 955): AuditRow[] {
+  const out: AuditRow[] = [];
+  for (const [symbol, bars] of Object.entries(bySymbol)) {
+    const day = bars.filter((b) => {
+      const k = nyClock(b.t);
+      return k.date === date && k.minute >= 570 && k.minute < 960;
+    });
+    if (day.length < 4) continue;
+    const at = day[0].t + 16 * 60_000; // 9:46: the range's 3 bars are complete
+    const r = pendingRange(symbol, bars, { nowMs: at });
+    if (!isPending(r) && r.why === "the opening range hasn't formed yet") continue;
+    const or = day.slice(0, 3);
+    const trigger = Math.round(Math.max(...or.map((b) => b.high)) * 100) / 100;
+    const stop = Math.round(Math.min(...or.map((b) => b.low)) * 100) / 100;
+    if (!(trigger > stop)) continue;
+    const rep = replay({ at: new Date(at).toISOString(), date, mode: "live", symbol, setup: "orb", trigger, stop, target: Math.round((trigger + 2 * (trigger - stop)) * 100) / 100, verdict: "take", why: "" }, bars, flatByMinute);
+    out.push({ symbol, blockedBy: isPending(r) ? null : plainWhy(r.why), trigger, stop, outcome: rep.outcome, R: rep.R });
+  }
+  return out;
+}
+
+/** What each rule did, in R: how many stocks it kept out, how many of those would have triggered, and their average. */
+export function auditStats(rows: AuditRow[]) {
+  const m = new Map<string, AuditRow[]>();
+  for (const r of rows) m.set(r.blockedBy ?? "passed the scan", [...(m.get(r.blockedBy ?? "passed the scan") ?? []), r]);
+  return Object.fromEntries(
+    [...m.entries()].map(([k, v]) => {
+      const t = v.filter((r) => r.outcome !== "not-triggered" && r.outcome !== "no-data");
+      return [k, { n: v.length, triggered: t.length, avgR: t.length ? Math.round((t.reduce((a, r) => a + r.R, 0) / t.length) * 100) / 100 : 0 }];
+    }),
+  );
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { dueSlot, parseAutoTimes } from "../lib/autoBatch";
+import { dueSlot, freshReady, parseAutoTimes, watchSlot, watchTimes } from "../lib/autoBatch";
+import { validateRules } from "../lib/settings";
 
 test("auto batch: the user's times, inside the window, each once a day", () => {
   assert.deepEqual(parseAutoTimes("9:47, 11:00,13:00; 08:30 16:00 nonsense 11:00"), ["09:47", "11:00", "13:00"]);
@@ -26,4 +27,29 @@ test("auto batch: the next run for the countdown, skipping weekends and holidays
   const wedBeforeThanksgiving = Date.parse("2026-11-25T19:00:00Z"); // Thanksgiving 2026-11-26 is closed
   assert.equal(nextAutoRun(wedBeforeThanksgiving, times)!.dayLabel, "Friday");
   assert.equal(nextAutoRun(wed1130, []), undefined);
+});
+
+test("watch: a slot every N minutes from 9:46 to 15:00 New York", () => {
+  const at = (h: number, m: number) => h * 60 + m;
+  assert.equal(watchSlot(at(9, 45), 10), undefined); // the range isn't formed yet
+  assert.equal(watchSlot(at(9, 46), 10), "watch-09:46");
+  assert.equal(watchSlot(at(9, 55), 10), "watch-09:46");
+  assert.equal(watchSlot(at(9, 56), 10), "watch-09:56");
+  assert.equal(watchSlot(at(15, 0), 10), "watch-14:56");
+  assert.equal(watchSlot(at(15, 1), 10), undefined);
+  assert.equal(watchSlot(at(10, 0), 0), undefined); // off
+  const t = watchTimes(10);
+  assert.equal(t[0], "09:46");
+  assert.equal(t.at(-1), "14:56");
+  assert.equal(t.length, 32);
+});
+
+test("watch: only ranges the team hasn't worked today wake it", () => {
+  assert.deepEqual(freshReady(["F", "KO"], ["F"]), ["KO"]);
+  assert.deepEqual(freshReady(["f"], ["F"]), []);
+  // the setting: 0 is off, otherwise at least 5 minutes
+  assert.ok(validateRules({ watch_every_min: "10" }).ok);
+  assert.ok(validateRules({ watch_every_min: "0" }).ok);
+  const bad = validateRules({ watch_every_min: "2" });
+  assert.ok(!bad.ok && bad.errors.watch_every_min);
 });

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import { configPath, loadOrCreateDesk, readDeskRules } from "@/lib/data/desk";
 import { deskView } from "@/lib/data/deskView";
-import { parseAutoTimes } from "@/lib/autoBatch";
+import { parseAutoTimes, watchTimes } from "@/lib/autoBatch";
 import { ensureGatewayKeepAlive, gatewayStatus } from "@/lib/data/ibkr";
 import { ensureReviewScheduler } from "@/lib/data/liveRun";
 import { readPortfolio } from "@/lib/data/portfolio";
@@ -20,7 +20,8 @@ export async function GET() {
     const cfg = await readFile(configPath(), "utf8").then(JSON.parse).catch(() => ({}) as Record<string, unknown>);
     const on = cfg.ibkr_orders === true && String(cfg.broker ?? "").toLowerCase() === "ibkr";
     const gateway = on ? (await gatewayStatus().catch(() => ({ state: "down" as const }))).state : undefined;
-    const realOrders = { on, live: cfg.paper === false, gateway, autoBatch: on && cfg.auto_batch === true ? parseAutoTimes(String(cfg.auto_batch_times ?? "")) : [] };
+    const watch = Number(cfg.watch_every_min) || 0;
+    const realOrders = { on, live: cfg.paper === false, gateway, autoBatch: on && cfg.auto_batch === true ? (watch > 0 ? watchTimes(watch) : parseAutoTimes(String(cfg.auto_batch_times ?? ""))) : [], watch: on && cfg.auto_batch === true ? watch : 0 };
     // paper mode off: real money. The page shows the real IBKR account (last sync), not the ledger.
     const practice = cfg.paper !== false;
     const p = practice ? null : await readPortfolio().catch(() => null);

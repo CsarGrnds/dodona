@@ -58,6 +58,7 @@ export interface PendingScan {
   confirmed: number; // checked with full bars
   pending: PendingRange[];
   rejected: Record<string, number>; // why, how many (stage 2)
+  early?: Record<string, number>; // why names didn't make stage 1: already broke out, fell away, …
 }
 
 export async function scanPending(opts: { symbols?: string[]; minRangePct?: number; maxPrice: number; minPrice?: number; minDollarVolume?: number; confirm?: number; limit?: number; exclude?: string[]; nowMs?: number }): Promise<PendingScan> {
@@ -73,16 +74,20 @@ export async function scanPending(opts: { symbols?: string[]; minRangePct?: numb
   const sparks = Object.assign({}, ...(await pool(batches, 8, (b) => spark(b).catch(() => ({})))));
   const { date } = nyClock(nowMs);
   const minPrice = opts.minPrice ?? 5, minDollar = opts.minDollarVolume ?? 5_000_000;
+  const early: Record<string, number> = {};
+  const out = (why: string) => ((early[why] = (early[why] ?? 0) + 1), false);
   const stage1 = Object.entries(sparks as Record<string, Spark>)
     .filter(([sym, s]) => {
-      if (exclude.has(sym)) return false;
+      if (exclude.has(sym)) return out("held or blocked");
       const price = s.price ?? s.closes[s.closes.length - 1];
-      if (!(price >= minPrice && price <= opts.maxPrice)) return false;
-      if (!((s.volume ?? 0) * price >= minDollar)) return false;
+      if (!(price >= minPrice && price <= opts.maxPrice)) return out("price out of range");
+      if (!((s.volume ?? 0) * price >= minDollar)) return out("too thin today");
       const today = s.closes.map((c, i) => ({ c, t: s.t[i] })).filter((x) => Number.isFinite(x.c) && nyClock(x.t).date === date && nyClock(x.t).minute >= 570);
-      if (today.length < 4) return false;
+      if (today.length < 4) return out("range not formed yet");
       const orClose = Math.max(...today.slice(0, 3).map((x) => x.c));
-      return !today.slice(3).some((x) => x.c > orClose * 1.003) && (orClose - today[today.length - 1].c) / orClose <= 0.02;
+      if (today.slice(3).some((x) => x.c > orClose * 1.003)) return out("already broke out");
+      if ((orClose - today[today.length - 1].c) / orClose > 0.02) return out("fell more than 2% under the range");
+      return true;
     })
     .sort((a, b) => (b[1].volume ?? 0) * (b[1].price ?? 0) - (a[1].volume ?? 0) * (a[1].price ?? 0))
     .map(([sym]) => sym);
@@ -98,5 +103,5 @@ export async function scanPending(opts: { symbols?: string[]; minRangePct?: numb
   const rejected: Record<string, number> = {};
   const reason = (why: string) => (why.startsWith("daily downtrend") ? "daily downtrend (under its 20- and 50-day averages)" : why.replace(/[\d.]+%/, "x%"));
   for (const c of checked) if (!isPending(c)) rejected[reason(c.why)] = (rejected[reason(c.why)] ?? 0) + 1;
-  return { at: new Date(nowMs).toISOString(), universe: universe.length, stage1: stage1.length, confirmed: toConfirm.length, pending: rankPending(checked.filter(isPending)).slice(0, opts.limit ?? 8), rejected };
+  return { at: new Date(nowMs).toISOString(), universe: universe.length, stage1: stage1.length, confirmed: toConfirm.length, pending: rankPending(checked.filter(isPending)).slice(0, opts.limit ?? 8), rejected, early };
 }

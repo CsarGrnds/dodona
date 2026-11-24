@@ -11,11 +11,15 @@
 // One run at a time; the Claude Code session uses the user's own plan.
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { dueSlot, openNote, parseAutoTimes, runNote } from "../autoBatch";
+import { dueSlot, freshReady, openNote, parseAutoTimes, runNote, watchSlot } from "../autoBatch";
+import { rulesBrief } from "../budget";
+import { normalizeDeskRules } from "../desk";
 import { marketStatus, tradingDay } from "../clock";
 import { gatewayStatus, syncFromGateway } from "./ibkr";
+import { scanPending } from "./pending";
+import { todaysShortlist } from "./shortlist";
 import { PRACTICE_OFF, practiceOn } from "./practice";
 
 const dir = () => resolve(process.cwd(), "trader", "runs");
@@ -65,7 +69,7 @@ const REVIEW_ALLOWED = ["Edit(trader/playbook.md)", "Write(trader/playbook.md)",
 const BLOCKED_ALWAYS = ["NotebookEdit", "WebFetch", "WebSearch", "Bash(curl:*)", "Bash(wget:*)", "Bash(rm:*)", "Bash(git:*)"];
 const BLOCKED = ["Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Bash(curl:*)", "Bash(wget:*)", "Bash(rm:*)", "Bash(git:*)"];
 const NOTE =
-  "You were started from Dodona's \"Run desk now\" button, with no one watching the chat. In LIVE MORNING mode your working directory is the repo root: run skill scripts as `python3 .claude/skills/<skill>/<script>.py …` (no cd), and tell every subagent the same, plus LIVE MORNING. In a paper cycle, skills run in trader/paper as usual (`cd trader/paper && python3 ../../.claude/skills/<skill>/<script>.py …`). Never put `$(...)` or backticks in a command (they can't be approved here), and tell every subagent the same. Dodona's own scripts (`npm run -s chart`, `npm run -s desk`) run from the repo root. Only stage, book on paper and check: never place, change or cancel an order (the user does that in Dodona). If a step needs the user (the gateway isn't logged in, it's outside the window), log it with `npm run desk -- log`, end the session, and stop.";
+  "You were started by Dodona (its Run button, its watch or its timer), with no one watching the chat. In LIVE MORNING mode your working directory is the repo root: run skill scripts as `python3 .claude/skills/<skill>/<script>.py …` (no cd), and tell every subagent the same, plus LIVE MORNING. In a paper cycle, skills run in trader/paper as usual (`cd trader/paper && python3 ../../.claude/skills/<skill>/<script>.py …`). Never put `$(...)` or backticks in a command (they can't be approved here), and tell every subagent the same. Dodona's own scripts (`npm run -s chart`, `npm run -s desk`) run from the repo root. Only stage, book on paper and check: never place, change or cancel an order (the user does that in Dodona). If a step needs the user (the gateway isn't logged in, it's outside the window), log it with `npm run desk -- log`, end the session, and stop. Real money or practice is decided by one setting only: \"paper\" in trader/config.json at the repo root. In LIVE MORNING mode never run `desk prep` or `desk book` (they're the practice ledger) and never read anything under trader/paper/ (the practice copy always says paper: true and is not the user's setting).";
 
 const alive = (pid: number) => {
   try {
@@ -80,7 +84,7 @@ async function state(): Promise<RunState | null> {
   return JSON.parse(await readFile(STATE(), "utf8").catch(() => "null"));
 }
 
-export async function startLiveRun(mode: RunMode = "live"): Promise<{ ok: boolean; error?: string; run?: LiveRun }> {
+export async function startLiveRun(mode: RunMode = "live", arg?: string): Promise<{ ok: boolean; error?: string; run?: LiveRun }> {
   const st = await state();
   if (st && alive(st.pid)) return { ok: false, error: "A run is already going." };
   // a paper cycle is practice: none while paper mode is off (it would spend tokens on fake trades)
@@ -88,6 +92,8 @@ export async function startLiveRun(mode: RunMode = "live"): Promise<{ ok: boolea
   await mkdir(dir(), { recursive: true });
   // the team sizes from, and leaves out, the real portfolio: refresh it from IBKR first (read-only)
   if (mode === "live") await syncFromGateway().catch(() => undefined);
+  // the rules in force as this run starts, read fresh (the user may have changed the money on the Desk)
+  const cfg = ((await readJsonFile(resolve(process.cwd(), "trader", "config.json"))) ?? {}) as Record<string, unknown>;
   const at = new Date();
   const log = join(dir(), `live-${at.toISOString().replace(/[:.]/g, "-")}.jsonl`);
   const fd = openSync(log, "a");
@@ -95,7 +101,8 @@ export async function startLiveRun(mode: RunMode = "live"): Promise<{ ok: boolea
     process.env.CLAUDE_BIN || "claude",
     [
       "-p",
-      mode === "live" ? "/trade-desk live" : mode === "review" ? "/trade-desk review" : mode === "screen" ? "/trade-desk screen" : "/trade-desk",
+      // the argument is checked to be plain dates or tickers: it lands in the run's prompt
+      mode === "live" ? `/trade-desk live${arg && /^[A-Z][A-Z0-9.]{0,9}(,[A-Z][A-Z0-9.]{0,9})*$/.test(arg) ? ` ${arg}` : ""}` : mode === "review" ? `/trade-desk review${arg && /^\d{4}-\d{2}-\d{2}$/.test(arg) ? ` ${arg}` : ""}` : mode === "screen" ? "/trade-desk screen" : "/trade-desk",
       "--output-format",
       "stream-json",
       "--verbose",
@@ -104,8 +111,10 @@ export async function startLiveRun(mode: RunMode = "live"): Promise<{ ok: boolea
       ...(mode === "review" ? REVIEW_ALLOWED : []),
       "--disallowedTools",
       ...(mode === "review" ? BLOCKED_ALWAYS : BLOCKED),
+      // a live run can't see the practice workspace at all: its copy of the rules says paper: true
+      ...(mode === "live" ? ["Read(./trader/paper/**)", "Glob(./trader/paper/**)", "Grep(./trader/paper/**)", "Bash(cd trader/paper:*)"] : []),
       "--append-system-prompt",
-      NOTE,
+      `${NOTE} The user's rules right now (trader/config.json, read when this run started): ${rulesBrief(cfg)}. Use these, never numbers from an earlier run or from the skill's examples, and tell every subagent the ones it needs.`,
     ],
     { cwd: process.cwd(), detached: true, stdio: ["ignore", fd, fd], env: process.env },
   );
@@ -168,7 +177,6 @@ export async function liveRun(): Promise<LiveRun> {
 
 // ---------------------------------------------------------------- the daily review, on its own
 
-const REVIEW_DONE = () => join(dir(), "last-review.txt");
 const g = globalThis as unknown as { __dodonaReviewTimer?: ReturnType<typeof setInterval>; __dodonaTimerVersion?: number };
 
 function nyNow(now = new Date()) {
@@ -176,18 +184,44 @@ function nyNow(now = new Date()) {
   return { date: `${p.year}-${p.month}-${p.day}`, minute: Number(p.hour) * 60 + Number(p.minute), weekend: p.weekday === "Sat" || p.weekday === "Sun" };
 }
 
-/** Start today's review once, between 4:10 and 6 PM New York, if the team logged candidates today. */
-export async function maybeStartReview(now = new Date()): Promise<"started" | "not-yet" | "done" | "nothing" | "busy"> {
+/**
+ * The day the coach should review now, or undefined: the latest trading day whose close has passed
+ * (today after 4:10 PM New York, else the trading day before). Never during 9:10 AM-4:10 PM on a
+ * trading day: the screen and the watch need the one run slot then.
+ */
+export function reviewDay(now = new Date()): string | undefined {
   const ny = nyNow(now);
-  if (ny.weekend || ny.minute < 16 * 60 + 10 || ny.minute > 18 * 60) return "not-yet";
-  if ((await readFile(REVIEW_DONE(), "utf8").catch(() => "")).trim() === ny.date) return "done";
+  const todayTrades = !ny.weekend && tradingDay(ny.date).ok;
+  if (todayTrades && ny.minute >= 9 * 60 + 10 && ny.minute < 16 * 60 + 10) return undefined;
+  if (todayTrades && ny.minute >= 16 * 60 + 10) return ny.date;
+  for (let d = 1; d < 10; d++) {
+    const day = new Date(Date.parse(`${ny.date}T12:00:00Z`) - d * 86_400_000).toISOString().slice(0, 10);
+    if (tradingDay(day).ok) return day;
+  }
+  return undefined;
+}
+
+const REVIEW_TRIES = () => join(dir(), "review-tries.json");
+
+/**
+ * The coach reviews every trading day, candidates or not (the rule audit is data even on a quiet day),
+ * and catches up when Dodona was off after the close: a day counts as reviewed once its
+ * trader/learning/reviews/<day>.json exists. Two tries a day at most.
+ */
+export async function maybeStartReview(now = new Date()): Promise<"started" | "not-yet" | "done" | "gave-up" | "busy"> {
+  const day = reviewDay(now);
+  if (!day) return "not-yet";
+  const file = resolve(process.cwd(), "trader", "learning", "reviews", `${day}.json`);
+  if ((await readFile(file, "utf8").catch(() => "")).includes('"reviewed_at"')) return "done";
   const st = await state();
   if (st && alive(st.pid)) return "busy";
+  const tries = ((await readJsonFile(REVIEW_TRIES())) ?? {}) as { day?: string; n?: number; at?: number };
+  const n = tries.day === day ? (tries.n ?? 0) : 0;
+  if (n >= 2) return "gave-up";
+  if (tries.day === day && tries.at && now.getTime() - tries.at < 30 * 60_000) return "busy"; // give a run half an hour
   await mkdir(dir(), { recursive: true });
-  const logged = (await readFile(resolve(process.cwd(), "trader", "learning", "candidates.jsonl"), "utf8").catch(() => "")).includes(`"date":"${ny.date}"`);
-  await writeFile(REVIEW_DONE(), ny.date + "\n");
-  if (!logged) return "nothing";
-  return (await startLiveRun("review")).ok ? "started" : "busy";
+  await writeFile(REVIEW_TRIES(), JSON.stringify({ day, n: n + 1, at: now.getTime() }));
+  return (await startLiveRun("review", day)).ok ? "started" : "busy";
 }
 
 // ---------------------------------------------------------------- the batch, by itself
@@ -286,6 +320,8 @@ export async function autoBatchTick(now = new Date()): Promise<string> {
     return r.ok ? "started screen" : `not started: ${r.error}`;
   }
   if (ny.weekend || !marketStatus(now.getTime()).open) return "market closed";
+  const every = Number(cfg.watch_every_min) || 0;
+  if (every > 0) return watchTick(cfg, ny, now, every, doneDoc as WatchDoc);
   const slot = dueSlot(parseAutoTimes(String(cfg.auto_batch_times ?? "")), ny.minute, doneDoc.slots);
   if (!slot) return "no slot due";
   const st = await state();
@@ -303,6 +339,50 @@ export async function autoBatchTick(now = new Date()): Promise<string> {
   }
   const r = await startLiveRun("live");
   return r.ok ? `started ${slot}` : `not started: ${r.error}`;
+}
+
+type WatchDoc = { slots: string[]; worked?: string[] };
+
+/**
+ * One look at the shortlist, every `every` minutes from 9:46 to 3:00 New York: Dodona's own scan (code,
+ * no Claude, no tokens). The trade team (`/trade-desk live`) starts only when a range is ready that it
+ * hasn't worked on yet today. Like the batch times, it only prepares: the user approves on the Desk.
+ */
+async function watchTick(cfg: Record<string, unknown>, ny: { date: string; minute: number }, now: Date, every: number, doneDoc: WatchDoc): Promise<string> {
+  const slot = watchSlot(ny.minute, every);
+  if (!slot) return "outside the watch window";
+  if (doneDoc.slots.includes(slot)) return "watching";
+  const st = await state();
+  if (st && alive(st.pid)) return "a run is going";
+  const risk = await readJsonFile(resolve(process.cwd(), "trader", "state", "risk.json"));
+  const orders = await readJsonFile(resolve(process.cwd(), "trader", "orders.json"));
+  if (orders?.orders?.length && risk?.checked_at && now.getTime() - Date.parse(risk.checked_at) < 15 * 60_000) return "a batch is waiting";
+  doneDoc.slots.push(slot);
+  await writeFile(AUTO_DONE(ny.date), JSON.stringify(doneDoc));
+  const gw = await gatewayStatus().catch(() => ({ state: "down" as const }));
+  if (gw.state !== "ready") {
+    if (!doneDoc.slots.includes("watch-gateway-note")) {
+      doneDoc.slots.push("watch-gateway-note");
+      await writeFile(AUTO_DONE(ny.date), JSON.stringify(doneDoc));
+      notifyUser("Dodona: IBKR gateway logged out", "The team can't look for trades until you log in at https://localhost:5001 (or say \"refresh IBKR\").");
+    }
+    return "gateway not ready";
+  }
+  const listed = await todaysShortlist(now.getTime());
+  if (!listed?.length) return "no shortlist for today";
+  const rules = normalizeDeskRules(cfg);
+  const pf = await readJsonFile(resolve(process.cwd(), "trader", "portfolio.json"));
+  const held = ((pf?.positions ?? []) as Array<{ ticker?: string }>).map((p) => String(p.ticker ?? "").toUpperCase()).filter(Boolean);
+  const maxPrice = Math.min(rules.budget * (1 - rules.cash_buffer_pct / 100), (rules.budget * rules.max_position_pct) / 100, rules.max_order_usd);
+  const scan = await scanPending({ symbols: listed, maxPrice, exclude: [...held, ...rules.blocked], limit: 8, confirm: 150, nowMs: now.getTime() });
+  const ready = scan.pending.map((x) => x.symbol);
+  await appendFile(join(dir(), `scans-${ny.date}.jsonl`), JSON.stringify({ at: scan.at, source: "shortlist", by: "watch", universe: scan.universe, early: scan.early, checked: scan.confirmed, rejected: scan.rejected, ready }) + "\n").catch(() => undefined);
+  const fresh = freshReady(ready, doneDoc.worked ?? []);
+  if (!fresh.length) return ready.length ? `watch: ${ready.join(", ")} already worked today` : "watch: nothing ready";
+  doneDoc.worked = [...(doneDoc.worked ?? []), ...fresh.map((s) => s.toUpperCase())];
+  await writeFile(AUTO_DONE(ny.date), JSON.stringify(doneDoc));
+  const r = await startLiveRun("live", fresh.map((x) => x.toUpperCase()).join(","));
+  return r.ok ? `watch ${slot}: team started for ${fresh.join(", ")}` : `not started: ${r.error}`;
 }
 
 const NOTIFIED = () => join(dir(), "notified.json");
@@ -333,11 +413,11 @@ async function notifyWhenReady(now: Date) {
   await mkdir(dir(), { recursive: true });
   await writeFile(NOTIFIED(), JSON.stringify({ checked_at: risk.checked_at }));
   const syms = orders.orders.map((o: { qty?: string; symbol?: string }) => `${o.qty} ${o.symbol}`).join(", ");
-  notifyUser("Dodona: IBKR batch ready", `${syms}. Approve on the Desk (IBKR orders) within 15 minutes, or it expires.`);
+  notifyUser("Dodona: IBKR batch ready", `${syms}. Approve at the top of the Desk (http://localhost:3000/desk) within 15 minutes, or it expires.`);
 }
 
 /** While Dodona runs, check every minute: the batch times, a batch to announce, the daily review. Safe to call often. */
-const TIMER_VERSION = 6; // bump when the tick changes, so a running Dodona swaps in the new one
+const TIMER_VERSION = 8; // bump when the tick changes, so a running Dodona swaps in the new one
 export function ensureReviewScheduler() {
   if (g.__dodonaReviewTimer && g.__dodonaTimerVersion === TIMER_VERSION) return;
   if (g.__dodonaReviewTimer) clearInterval(g.__dodonaReviewTimer);

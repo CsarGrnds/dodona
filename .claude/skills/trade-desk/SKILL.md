@@ -31,6 +31,11 @@ Day trading loses most people money; a good paper week is not proof.
   files or an `orders.json` to get a PASS. A BLOCK or a refusal is an answer: log it and move on.
 - **One candidate at a time** through entry → exit → Time Machine → budget → risk: those skills
   share `plan.json` and `orders.json`, so never run two of them in parallel.
+- **Today's rules, every run.** `npm run desk -- session start` prints `rules`: the user's limits read
+  from `trader/config.json` at that moment (the trading money, max loss a trade and a day, trades a
+  day, the fee limit, real money or practice). Use those numbers for the whole run and pass the ones a
+  subagent needs in its prompt. Never reuse numbers from an earlier run, the playbook or this file's
+  examples: the user changes the money from the Desk, and the limits follow it.
 - **Log as you go** so Dodona shows the session live: every specialist's verdict goes into
   `npm run desk -- log`. Quote numbers from the reports; never invent one.
 
@@ -152,13 +157,24 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
 
 - Run it any time between 9:46 AM and 3:00 PM New York (right after the opening range forms is best:
   most breakouts come early). Outside that window, say so and stop.
+- **Started by Dodona's watch** (`/trade-desk live KO,F`): every few minutes Dodona's own code checks
+  the shortlist, and it starts this run only when ranges are ready; the symbols after `live` are the
+  ones it found. Still run `desk pending` (prices move; it re-checks them) and work those first. If
+  they're no longer ready, log that and end: the watch looks again in a few minutes.
+- **The money is the user's "Trading today" amount**, and the limits follow it: `budget`,
+  `max_loss_per_trade_usd`, `max_daily_loss_usd` and `max_order_usd` in `trader/config.json` (with
+  `"auto_from_budget": true` they're worked out from the budget, e.g. 2% a trade and 5% a day). Read
+  them from the file every run; never assume a number from an earlier run or from this text.
 - Skills run from the **repo root** (the real portfolio and rules). Tell every subagent, in its
   prompt: **"LIVE MORNING: run from the repo root."** Never edit `trader/config.json`, and never
   touch `"paper"`.
+- **Real money or practice is one setting:** `"paper"` in `trader/config.json` at the repo root.
+  Never read `trader/paper/` in this mode: it's the practice copy and always says `"paper": true`.
+  Don't run `desk prep` or `desk book` (practice ledger commands; they refuse while practice is off).
 - Skip any stock the user already holds (`trader/portfolio.json`): Dodona refuses them, so a day
   trade's sell can never touch shares they keep.
 - Never stage more than the budget allows: the batch's total cost (shares x trigger, plus anything
-  placed at IBKR earlier today) must fit in the budget minus the cash buffer (with $200 and 20%: $160).
+  placed at IBKR earlier today) must fit in the budget minus the cash buffer (`budget` x (1 - `cash_buffer_pct`/100), from the file).
   Dodona refuses a batch over it, so stage the best trade first and stop when the next one won't fit.
 - Skip trades too small to pay for themselves: IBKR charges at least $1.00 each way (fixed pricing),
   and Dodona refuses a trade whose fees (about $2 in and out) are over the user's "max_fee_pct" of its
@@ -207,7 +223,7 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
    that the user approves them in Dodona (Desk → IBKR orders) within 15 minutes of the risk
    check. If PushNotification is available, notify the user with the same one line.
 
-Never run this from `/loop`. Dodona's own timer may start it at the user's "Batch times" (Settings → Broker → Prepare the batch by itself): it still only stages and checks, and it ends with the user approving the batch on the Desk.
+Never run this from `/loop`. Dodona's own timer starts it: with "Look for trades every" set (Settings → Broker), its watch starts it when a shortlisted range is ready; otherwise at the user's "Batch times". Either way it only stages and checks, and it ends with the user approving the batch on the Desk.
 
 ## SCREEN mode (`/trade-desk screen`): the day's shortlist, before the open
 
@@ -219,15 +235,18 @@ by itself" is on). It only builds the list; it stages nothing.
    `trader/config.json`). Log its report: kept, dropped by news and why, the best 5.
 3. End the session with a 1-2 sentence summary.
 
-## REVIEW mode (`/trade-desk review`): the coach, after the close
+## REVIEW mode (`/trade-desk review [YYYY-MM-DD]`): the coach, after the close
 
-Once a day after 4:05 PM New York (Dodona starts it by itself at 4:10 PM while it's running):
+Every trading day after 4:05 PM New York. Dodona starts it by itself at 4:10 PM, and the next time it
+runs if it was off after the close (then with that day's date, e.g. `/trade-desk review 2026-11-23`).
 
-1. `npm run desk -- session start --trigger "REVIEW: today's calls and the playbook"`
-2. Call `trade-coach`. It replays every candidate logged today on the real bars, grades the calls
-   and updates `trader/playbook.md`.
+1. `npm run desk -- session start --trigger "REVIEW: <the day>'s calls and the playbook"`
+2. Call `trade-coach`, giving it the date when one was passed (it runs `npm run -s desk -- review
+   --date <date>`). It replays every candidate logged that day on the real bars, and the **rule audit**:
+   every stock on that day's shortlist as the 9:46 scan saw it, with what a buy-stop at its range high
+   would have done. It grades the calls and updates `trader/playbook.md`.
 3. Log its verdict and the lessons it added or changed, then end the session with a 2-3 sentence
-   summary. No candidates today: log that and end.
+   summary. A day with no candidates still gets the rule audit: never end with "nothing to review".
 
 ## Running it all day
 

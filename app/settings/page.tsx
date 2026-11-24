@@ -7,7 +7,17 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PaperSwitch } from "@/components/PaperSwitch";
 import { Brand, Spinner } from "@/components/ui";
+import { applyBudget, fitFor, fitLine } from "@/lib/budget";
 import { AGENT_MODELS, RULE_SECTIONS, TEAM, rulesSummary, validateRules, type Field } from "@/lib/settings";
+
+/** With "Limits from the budget" on, these follow the budget and can't be typed in. */
+const FROM_BUDGET = ["max_loss_per_trade_usd", "max_daily_loss_usd", "max_order_usd"];
+/** The form with the budget's limits filled in (as text, like the rest of the form). */
+const derive = (f: Record<string, unknown>) => {
+  if (f.auto_from_budget !== true) return f;
+  const d: Record<string, unknown> = applyBudget({ ...f, budget: Number(String(f.budget ?? "").replace(/[$,\s]/g, "")) });
+  return Number(d.budget) > 0 ? { ...f, ...Object.fromEntries(FROM_BUDGET.map((k) => [k, String(d[k])])) } : f;
+};
 
 interface Settings {
   rules: Record<string, unknown>;
@@ -76,8 +86,10 @@ export default function SettingsPage() {
   const shownErrors = { ...live, ...errors };
   const summary = useMemo(() => (preview.ok ? rulesSummary(preview.values) : []), [preview]);
 
+  const fit = useMemo(() => (preview.ok && s ? fitFor({ ...s.rules, ...preview.values }) : undefined), [preview, s]);
+
   const set = (k: string, v: unknown) => {
-    setForm((f) => ({ ...f, [k]: v }));
+    setForm((f) => derive({ ...f, [k]: v }));
     setErrors((e) => {
       const { [k]: _, ...rest } = e;
       return rest;
@@ -146,6 +158,24 @@ export default function SettingsPage() {
                   {summary.map((x) => <li key={x}>{x}</li>)}
                 </ul>
               )}
+              {fit && (
+                <div className="st-fit small">
+                  <b>What this budget can pay for</b>
+                  {fit.strategies.map((x) => (
+                    <div key={x.id} className={`st-fit-row ${x.verdict}`}>
+                      <span className={`pill ${x.verdict === "fits" ? "ok" : x.verdict === "tight" ? "care" : "bad"}`}>{x.verdict === "fits" ? "Fits" : x.verdict === "tight" ? "Tight" : "Too small"}</span>
+                      <span>
+                        {fitLine(x)}
+                        {!x.built && <span className="muted"> Not available to the team yet.</span>}
+                      </span>
+                    </div>
+                  ))}
+                  <div className="muted">
+                    Fees are IBKR&apos;s fixed pricing ($1 a side minimum); a trade can pay for itself when they&apos;re under {25}% of its risk. This checks fees only, not whether a strategy makes money.
+                    {fit.maxFeePct !== undefined && fit.maxFeePct > 25 && <> Your own gate (Max fees vs risk) is {fit.maxFeePct}%, so Dodona lets through trades whose fees are up to {fit.maxFeePct / 100}× their risk.</>}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="st-actions">
               {msg && <span className="small" style={{ color: "var(--buy)" }}>{msg}</span>}
@@ -166,8 +196,11 @@ export default function SettingsPage() {
                 {sec.fields.map((f) => {
                   const e = shownErrors[f.key];
                   const changed = f.key in changedRules;
+                  const auto = form.auto_from_budget === true;
+                  const locked = auto && FROM_BUDGET.includes(f.key);
+                  const unused = !auto && (f.key === "risk_pct" || f.key === "daily_loss_pct");
                   return (
-                    <label key={f.key} className={`st-field ${e ? "bad" : ""} ${changed ? "changed" : ""}`}>
+                    <label key={f.key} className={`st-field ${e ? "bad" : ""} ${changed ? "changed" : ""} ${unused ? "st-unused" : ""}`}>
                       <span className="st-label">
                         {f.label}
                         {changed && <span className="st-dot" title="Not saved yet" />}
@@ -187,6 +220,8 @@ export default function SettingsPage() {
                           <input
                             value={String(form[f.key] ?? "")}
                             onChange={(ev) => set(f.key, ev.target.value)}
+                            readOnly={locked}
+                            title={locked ? "Worked out from the budget" : undefined}
                             inputMode={f.type === "usd" || f.type === "pct" || f.type === "ratio" || f.type === "int" ? "decimal" : undefined}
                             placeholder={f.type === "time" ? "09:45" : f.type === "tickers" ? "e.g. GME, AMC" : undefined}
                             className={f.type === "tickers" || f.type === "text" ? "wide" : ""}
@@ -195,7 +230,7 @@ export default function SettingsPage() {
                           {f.type === "time" && <span className="muted small">NY</span>}
                         </span>
                       )}
-                      <span className="st-help small muted">{e ? <span className="err">{e}</span> : f.help}</span>
+                      <span className="st-help small muted">{e ? <span className="err">{e}</span> : locked ? "From the budget (Limits from the budget is on)." : f.help}</span>
                     </label>
                   );
                 })}

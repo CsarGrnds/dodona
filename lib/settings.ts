@@ -2,6 +2,8 @@
 // Pure and shared: the Settings page renders from FIELDS, the API validates with validateRules.
 // The rules live in trader/config.json, the file every /trader-* skill and Dodona's desk read.
 
+import { limitsFromBudget } from "./budget";
+
 export type FieldType = "usd" | "pct" | "int" | "ratio" | "time" | "bool" | "tickers" | "text" | "choice";
 
 export interface Field {
@@ -28,6 +30,7 @@ export const RULE_SECTIONS: Section[] = [
     blurb: "How much is for trading and how much always stays in cash.",
     fields: [
       { key: "budget", label: "Budget", type: "usd", min: 1, help: "The money this is for. Only money you can afford to lose." },
+      { key: "auto_from_budget", label: "Limits from the budget", type: "bool", help: "On: the max loss per trade, the max loss per day and the biggest order are worked out from the budget and the two percentages under Risk, and follow it when the budget changes. Off: you set them in dollars." },
       { key: "cash_buffer_pct", label: "Cash buffer", type: "pct", min: 0, max: 100, help: "Always kept in cash, never sized into a trade." },
       { key: "max_position_pct", label: "Biggest position", type: "pct", min: 1, max: 100, help: "No single stock may be more than this share of the budget." },
       { key: "max_order_usd", label: "Biggest order", type: "usd", min: 1, help: "The most one order may cost." },
@@ -39,8 +42,10 @@ export const RULE_SECTIONS: Section[] = [
     title: "Risk",
     blurb: "The losses each trade and each day may reach. The stop decides the size: the further the stop, the fewer shares.",
     fields: [
-      { key: "max_loss_per_trade_usd", label: "Max loss per trade", type: "usd", min: 0.01, help: "What one trade may lose if the stop fills at the stop. Sizes every trade." },
-      { key: "max_daily_loss_usd", label: "Max loss per day", type: "usd", min: 0.01, help: "Losses taken plus the risk still open. Once reached, no new entries today." },
+      { key: "risk_pct", label: "Risk per trade", type: "pct", min: 0.1, max: 25, help: "With \"Limits from the budget\" on: the share of the budget one trade may lose at its stop. 1–2% is a common default." },
+      { key: "daily_loss_pct", label: "Loss per day", type: "pct", min: 0.1, max: 50, help: "With \"Limits from the budget\" on: the share of the budget that may be lost or at risk in one day before new entries stop." },
+      { key: "max_loss_per_trade_usd", label: "Max loss per trade", type: "usd", min: 0.01, help: "What one trade may lose if the stop fills at the stop. Sizes every trade. Worked out from the budget when \"Limits from the budget\" is on." },
+      { key: "max_daily_loss_usd", label: "Max loss per day", type: "usd", min: 0.01, help: "Losses taken plus the risk still open. Once reached, no new entries today. Worked out from the budget when \"Limits from the budget\" is on." },
       { key: "max_fee_pct", label: "Max fees vs risk", type: "pct", min: 5, max: 300, help: "IBKR commissions (in and out) may be at most this share of a trade's max loss; above it, real orders are refused. 25% is the safe default: at 100%+ a winning trade barely pays for its fees, and a losing one costs about double." },
       { key: "min_reward_risk", label: "Min reward : risk", type: "ratio", min: 0, max: 20, help: "The target must be at least this many times the risk (1.0 = 1R)." },
       { key: "require_stop", label: "Require a stop", type: "bool", help: "Every entry must carry a stop-loss. Strongly recommended." },
@@ -75,6 +80,7 @@ export const RULE_SECTIONS: Section[] = [
     fields: [
       { key: "broker", label: "Broker", type: "choice", options: [{ value: "ibkr", label: "Interactive Brokers" }, { value: "alpaca", label: "Alpaca" }], help: "Which broker /trader-broker and Dodona's order ticket work with." },
       { key: "auto_batch", label: "Prepare the batch by itself", type: "bool", help: "At the times below, Dodona starts the trade team (/trade-desk live) on its own, and puts a notification on this Mac when a batch is ready. It never places anything: you still approve each batch on the Desk, within 15 minutes. Needs Dodona running and the gateway logged in." },
+      { key: "watch_every_min", label: "Look for trades every", type: "int", min: 0, max: 60, help: "Minutes. From 9:46 AM to 3:00 PM New York, Dodona checks the shortlist this often by itself (no Claude, no cost) and starts the trade team only when a stock's range is ready. 0 = off: the team runs at the batch times below instead. Needs \"Prepare the batch by itself\" on." },
       { key: "auto_batch_times", label: "Batch times (New York)", type: "text", help: "When to prepare a batch, between 09:46 and 15:00, separated by commas. Each run uses your Claude plan." },
       { key: "ibkr_orders", label: "Send orders to IBKR", type: "bool", help: "Lets you place the order trader-risk passed from Dodona's Desk, through the IBKR gateway: only on your approval in Dodona, and only to a paper account (DU…) while Paper trading is on." },
       { key: "one_click", label: "One-click approval", type: "bool", help: "Place a ready batch, or send a stop ticket from Today, with one click on its button, without typing its confirmation. The button names the orders, their cost and max loss (or the new stop). Every other gate stays: trader-risk's PASS within 15 minutes, fees, budget and daily limit, never the same order twice, only from Dodona's page, and IBKR's own questions still come to you." },
@@ -152,11 +158,16 @@ export function validateRules(input: Record<string, unknown>): { ok: true; value
       else values[f.key] = f.type === "usd" ? Math.round(n * 100) / 100 : n;
     }
   }
+  // with "Limits from the budget" on, the dollar limits follow the budget, whatever was typed in them
+  if (values.auto_from_budget === true && typeof values.budget === "number" && !errors.risk_pct && !errors.daily_loss_pct && !errors.cash_buffer_pct)
+    Object.assign(values, limitsFromBudget(values as { budget: number }));
   const num = (k: string) => (typeof values[k] === "number" ? (values[k] as number) : undefined);
   const t = (k: string) => (typeof values[k] === "string" && TIME.test(values[k] as string) ? minutes(values[k] as string) : undefined);
   const loss = num("max_loss_per_trade_usd"), day = num("max_daily_loss_usd"), budget = num("budget");
   if (loss !== undefined && day !== undefined && loss > day && !errors.max_daily_loss_usd) errors.max_daily_loss_usd = "must be at least the max loss per trade";
   if (loss !== undefined && budget !== undefined && loss > budget && !errors.max_loss_per_trade_usd) errors.max_loss_per_trade_usd = "can't be more than the budget";
+  const every = num("watch_every_min");
+  if (every !== undefined && every > 0 && every < 5 && !errors.watch_every_min) errors.watch_every_min = "0 (off), or at least 5 minutes";
   const lo = num("min_order_usd"), hi = num("max_order_usd");
   if (lo !== undefined && hi !== undefined && lo > hi && !errors.min_order_usd) errors.min_order_usd = "must be at most the biggest order";
   const before = t("no_entries_before"), after = t("no_entries_after"), flat = t("flat_by");

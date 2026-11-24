@@ -62,14 +62,19 @@ export function IbkrOrderPanel() {
   };
 
   if (!t) return null;
+  // Only when there's something to approve, answer or watch: an empty card of ✕ gates adds nothing
+  // (the Desk's header already shows the gateway and real-money state).
+  // (standing stop orders and fills at IBKR alone don't count: there's nothing to approve)
+  const activity = !!act && (act.unfilledToday > 0 || act.log.length > 0);
+  if (t.items.length === 0 && questions.length === 0 && !msg && !activity) return null;
   const off = !t.enabled;
   const phraseOk = !!t.confirm && norm(typed) === t.confirm;
   const live = t.account && !t.accountIsPaper;
 
   return (
-    <section className="panel" id="ibkr-orders" style={{ marginTop: 14 }}>
+    <section className={`panel${t.items.length > 0 ? " ib-waiting" : ""}`} id="ibkr-orders" style={{ marginTop: 14 }}>
       <div className="row" style={{ marginBottom: 8 }}>
-        <h2 style={{ margin: 0 }}>⇄ IBKR orders</h2>
+        <h2 style={{ margin: 0 }}>{t.items.length > 0 ? `⚠ ${t.items.length} order${t.items.length === 1 ? "" : "s"} waiting for your approval` : "⇄ IBKR orders"}</h2>
         <span className={`pill ${off ? "" : t.accountIsPaper ? "ok" : t.account ? "bad" : "care"}`}>
           {off ? "Off" : t.account ? `${t.accountIsPaper ? "Paper" : "LIVE"} · …${t.account.slice(-3)}` : t.gateway === "login" ? "Gateway: log in" : t.gateway === "down" ? "Gateway down" : "…"}
         </span>
