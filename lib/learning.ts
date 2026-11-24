@@ -19,6 +19,7 @@ export interface Candidate {
   why: string;
   chartScore?: number; // the chartist's 1-5
   marketMode?: string; // "aggressive" | "normal" | "defensive"
+  recheck?: string[]; // a skip that holds only while these hold (lib/board.ts RECHECKS): the scout re-checks it
 }
 
 export type Outcome = "target" | "stop" | "close" | "not-triggered" | "no-data";

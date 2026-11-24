@@ -21,6 +21,7 @@ const ROLE: Record<string, { label: string; icon: string; skill?: string }> = {
   "trade-risk": { label: "Risk", icon: "⛨", skill: "trader-risk" },
   "trade-chartist": { label: "Chartist", icon: "◫" },
   "trade-coach": { label: "Coach", icon: "✎" },
+  "trade-strategist": { label: "Strategist", icon: "∑" },
 };
 const roleOf = (a: string) => ROLE[a] ?? ROLE[`trade-${a}`] ?? { label: a, icon: "•" };
 const keyOf = (a: string) => (ROLE[a] ? a : ROLE[`trade-${a}`] ? `trade-${a}` : a);

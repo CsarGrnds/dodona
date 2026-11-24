@@ -11,13 +11,14 @@
 //   npm run desk -- session end --summary "…" [--status done|error]
 //   npm run desk -- driver team|auto             who makes entries: the team, or Dodona's own desk
 //   npm run desk -- stage add [--trigger P] | list | drop | done | clear   REAL account: stage the morning batch
-//   npm run desk -- candidate --symbol X --trigger P --stop S --target T --verdict take|skip --why "…" [--setup orb --mode live --chart-score 4 --market normal]
+//   npm run desk -- candidate --symbol X --trigger P --stop S --target T --verdict take|skip --why "…" [--setup orb --mode live --chart-score 4 --market normal --recheck volume,vwap,market]
 //   npm run desk -- review [--date YYYY-MM-DD]     replay the day's candidates on real bars and grade the calls
 //   npm run desk -- shortlist build | show | drop --symbol X --why "…"   the pre-market shortlist (trader/shortlist.json) live runs scan
-//   npm run desk -- pending [--all]               formed-not-broken ranges: today's shortlist only, or the whole market with --all
+//   npm run desk -- pending [--all] [--only A,B]  formed-not-broken ranges: today's shortlist only, or the whole market with --all; --only re-checks just those stocks
 import { appendFile, mkdir, readdir, rename, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { rulesBrief } from "../lib/budget";
+import { isRecheck, RECHECKS } from "../lib/board";
 import { auditStats, learningStats, replay, ruleAudit, type AuditRow, type Candidate, type Replay } from "../lib/learning";
 import { scanPending } from "../lib/data/pending";
 import { buildShortlist, dropFromShortlist, readShortlist, todaysShortlist } from "../lib/data/shortlist";
@@ -215,12 +216,16 @@ async function main() {
         const held = ((pf?.positions ?? []) as Array<{ ticker?: string }>).map((p) => String(p.ticker ?? "").toUpperCase()).filter(Boolean);
         const maxPrice = Number(flag("max-price")) || Math.min((rules.budget * (1 - rules.cash_buffer_pct / 100)), (rules.budget * rules.max_position_pct) / 100, rules.max_order_usd);
         // today's pre-market shortlist when there is one (trade-screener built it); --all scans the whole market
-        const listed = argv.includes("--all") ? null : await todaysShortlist();
+        const shortlist = argv.includes("--all") ? null : await todaysShortlist();
+        // --only KO,F: a run the watch started re-checks just the stocks it was started for, never the
+        // ones earlier runs already worked today (the watch logged its own scan of the whole list)
+        const only = (flag("only") ?? process.env.DESK_ONLY ?? "").split(",").map((x) => x.trim().toUpperCase()).filter((x) => /^[A-Z][A-Z0-9.\-]{0,9}$/.test(x));
+        const listed = only.length ? (shortlist ?? only).filter((x) => only.includes(x.toUpperCase())) : shortlist;
         const scan = await scanPending({ ...(listed ? { symbols: listed } : {}), maxPrice, exclude: [...held, ...rules.blocked], limit: Number(flag("limit")) || 8, confirm: Number(flag("confirm")) || 150, ...(flag("min-range") ? { minRangePct: Number(flag("min-range")) } : {}) });
         // every scan is kept for the Desk's session card: what each run looked at and why nothing was ready
         await mkdir(real("runs"), { recursive: true });
-        await appendFile(real(`runs/scans-${nyClock(nowMs).date}.jsonl`), JSON.stringify({ at: scan.at, source: listed ? "shortlist" : "market", universe: scan.universe, early: scan.early, checked: scan.confirmed, rejected: scan.rejected, ready: scan.pending.map((x) => x.symbol) }) + "\n").catch(() => undefined);
-        result = { ...scan, source: listed ? `today's shortlist (${listed.length} names)` : "the whole market (no shortlist for today)", maxPrice, excludedHeld: held.length, next: "for the best ones: trade-chartist, then trade-exit with --entry <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb, Time Machine, budget, stage add" };
+        if (!only.length) await appendFile(real(`runs/scans-${nyClock(nowMs).date}.jsonl`), JSON.stringify({ at: scan.at, source: listed ? "shortlist" : "market", universe: scan.universe, early: scan.early, checked: scan.confirmed, rejected: scan.rejected, ready: scan.pending.map((x) => x.symbol) }) + "\n").catch(() => undefined);
+        result = { ...scan, source: only.length ? `only ${listed!.join(", ") || "(none of them is on today's shortlist)"}, the stocks this run was started for` : listed ? `today's shortlist (${listed.length} names)` : "the whole market (no shortlist for today)", maxPrice, excludedHeld: held.length, next: "for the best ones: trade-chartist, then trade-exit with --entry <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb, Time Machine, budget, stage add" };
         break;
       }
 
@@ -263,7 +268,11 @@ async function main() {
           why: flag("why") ?? "",
           ...(flag("chart-score") ? { chartScore: n("chart-score") } : {}),
           ...(flag("market") ? { marketMode: flag("market") } : {}),
+          ...(flag("recheck") ? { recheck: flag("recheck")!.split(",").map((x) => x.trim()).filter(Boolean) } : {}),
         };
+        const badRecheck = (c.recheck ?? []).filter((x) => !isRecheck(x));
+        if (badRecheck.length) fail(`--recheck takes ${Object.keys(RECHECKS).join(", ")} (comma-separated), not ${badRecheck.join(", ")}`);
+        if (c.recheck?.length && c.verdict !== "skip") fail("--recheck is only for a skip");
         if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(c.symbol)) fail("--symbol is required");
         if (!(c.trigger > c.stop && c.target > c.trigger)) fail("--trigger, --stop and --target are required (stop < trigger < target)");
         if (!flag("verdict")) fail("--verdict take|skip is required");

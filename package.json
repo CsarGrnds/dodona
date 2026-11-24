@@ -15,7 +15,8 @@
     "screenshots": "bash scripts/screenshots.sh",
     "desk": "tsx scripts/desk.ts",
     "chart": "tsx scripts/chart.ts",
-    "notify:test": "tsx scripts/notify-test.ts"
+    "notify:test": "tsx scripts/notify-test.ts",
+    "research": "tsx scripts/research.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.2.0",

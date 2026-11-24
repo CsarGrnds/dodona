@@ -31,6 +31,7 @@ export const SEATS: Record<string, Seat> = {
   "trade-budget": { label: "Budget", i: 3.7, j: 8.4, shirt: "#3fb5a3", hair: "#5a3a22", skin: "#f0caa8" },
   "trade-risk": { label: "Risk", i: 6.1, j: 8.4, shirt: "#e5534b", hair: "#1d1d1d", skin: "#8a5a3a", fem: true },
   "trade-coach": { label: "Coach", i: 8.5, j: 7.4, shirt: "#e8b84a", hair: "#9a5a2a", skin: "#e8b48f" },
+  "trade-strategist": { label: "Strategist", i: 1.0, j: 9.6, shirt: "#5aa9e6", hair: "#3a2a1a", skin: "#c99572", fem: true },
 };
 const keyOf = (a: string) => (SEATS[a] ? a : SEATS[`trade-${a}`] ? `trade-${a}` : "lead");
 const DESK_D = 0.7;

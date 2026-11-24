@@ -91,6 +91,16 @@ call. If a Haiku report looks wrong or incomplete, re-run that one step yourself
     --verdict take|skip --why "<the reasons, with the numbers>" --chart-score N --market <mode> [--mode live]
   ```
   Skips teach as much as trades. Log candidates that had a plan (trigger, stop, target).
+- **Mark the skips that can change.** When everything else is good enough to take and a skip rests
+  ONLY on things that change during the day, add `--recheck` with those: `volume` (relative volume
+  under 1.0), `vwap` (price under VWAP), `market` (defensive mode: SPY under its VWAP). Dodona's scout
+  then watches them and wakes the team for that stock once all of them clear (at most twice a day).
+  Never mark a skip for something fixed: a chart 1-2, a range high made by one wick, a coin-flip or
+  negative Time Machine, earnings or news. Those are final for the day.
+- **Log a ready range you skip before planning it, too** (light volume, under VWAP, a defensive
+  market): use the range's own numbers, `--trigger <orHigh> --stop <orLow> --target <orHigh + 2 x
+  (orHigh - orLow)>`, with `--recheck` for the reason. Without a logged call the scout can't re-check
+  it, and the coach can't replay it.
 
 ## One cycle
 
@@ -159,8 +169,17 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
   most breakouts come early). Outside that window, say so and stop.
 - **Started by Dodona's watch** (`/trade-desk live KO,F`): every few minutes Dodona's own code checks
   the shortlist, and it starts this run only when ranges are ready; the symbols after `live` are the
-  ones it found. Still run `desk pending` (prices move; it re-checks them) and work those first. If
-  they're no longer ready, log that and end: the watch looks again in a few minutes.
+  ones it found, never worked earlier today. Re-check only those: `npm run -s desk -- pending --only KO,F`
+  (prices move), and work only what it returns. Never look at other shortlisted stocks in this run:
+  earlier runs already worked them, and the watch starts a new run for any new one. If none is still
+  ready, log that and end: the watch looks again in a few minutes.
+- **The board.** The scout writes every shortlisted stock's state to `trader/runs/board-<date>.json` on
+  each look (ready, broke out, too thin, …, with the team's latest call). Read it instead of re-scanning
+  when you need the day's picture.
+- **A RE-CHECK run** (its instructions start with `RE-CHECK:`) is for a stock skipped earlier today whose
+  `--recheck` reasons have all cleared. Re-check it with `pending --only`; if the range is the same, reuse
+  the plan and chart score logged for it, re-run the Time Machine from now, decide again, and log the
+  candidate again (with `--recheck` once more if it's still a skip for a reason that can change).
 - **The money is the user's "Trading today" amount**, and the limits follow it: `budget`,
   `max_loss_per_trade_usd`, `max_daily_loss_usd` and `max_order_usd` in `trader/config.json` (with
   `"auto_from_budget": true` they're worked out from the budget, e.g. 2% a trade and 5% a day). Read
@@ -191,7 +210,8 @@ as buy-stops (each buys only if its breakout triggers, with its stop, target and
 2. Find ranges that have formed but NOT broken yet (the scanner skill only lists breakouts that
    already happened, too late for an order that waits at IBKR):
    ```bash
-   npm run -s desk -- pending
+   npm run -s desk -- pending                 # Run desk now / a timer
+   npm run -s desk -- pending --only KO,F     # started by the watch: only the stocks after `live`
    ```
    It checks today's shortlist (`source` says so; the whole market only when there's none) and
    returns the best few (`pending`): each with its range high (`orHigh`, the trigger), range low,
@@ -247,6 +267,20 @@ runs if it was off after the close (then with that day's date, e.g. `/trade-desk
    would have done. It grades the calls and updates `trader/playbook.md`.
 3. Log its verdict and the lessons it added or changed, then end the session with a 2-3 sentence
    summary. A day with no candidates still gets the rule audit: never end with "nothing to review".
+
+## RESEARCH mode (`/trade-desk research`): the strategist, once a week
+
+Dodona starts it by itself on Saturdays from 10 AM New York (or Sunday, if it was off) when real orders
+are on; the user can also ask for it any time. It only reads and reports: it changes no rule, no
+strategy and no setting.
+
+1. `npm run desk -- session start --trigger "RESEARCH: which strategies make money at this budget"`
+2. Call `trade-strategist`. It runs `npm run -s research` (every strategy in `lib/strategies.ts`, ~60
+   days of 5-minute bars, each morning's shortlist rebuilt without hindsight, IBKR's fees at the
+   user's budget), compares it with the team's logged calls and writes `trader/research/report.md`.
+3. Log its findings (`--agent strategist`): the best strategy and its verdict, the live strategy's
+   verdict, its recommendation. End the session with a 2-3 sentence summary. Only the user turns a
+   strategy on; the team keeps trading what it trades today.
 
 ## Running it all day
 
