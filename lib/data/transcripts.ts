@@ -125,6 +125,36 @@ function resultText(c: unknown): string {
   return "";
 }
 
+
+// Long sessions grow to tens of MB. Parsing a whole file blocks Dodona's server, and the Desk polls
+// these, so a big file is read from its end: only what's newer than `from` (or the last `cap` bytes).
+const TAIL_STEP = 4 * 1024 * 1024;
+const BIG = 8 * 1024 * 1024;
+async function readRecent(file: string, size: number, from = -Infinity, cap = Infinity): Promise<string> {
+  if (size <= BIG) return readFile(file, "utf8").catch(() => "");
+  const fh = await open(file, "r").catch(() => null);
+  if (!fh) return "";
+  try {
+    const parts: Buffer[] = [];
+    let pos = size;
+    while (pos > 0 && size - pos < cap) {
+      const n = Math.min(TAIL_STEP, pos);
+      pos -= n;
+      const buf = Buffer.alloc(n);
+      await fh.read(buf, 0, n, pos);
+      parts.unshift(buf);
+      // stop once the first whole line in this chunk is older than `from`
+      const head = buf.subarray(0, Math.min(n, 400_000)).toString("utf8");
+      const m = head.slice(head.indexOf("\n") + 1).match(/^\{[^\n]*?"timestamp":"([^"]+)"/);
+      if (m && Date.parse(m[1]) < from) break;
+    }
+    const text = Buffer.concat(parts).toString("utf8");
+    return pos > 0 ? text.slice(text.indexOf("\n") + 1) : text; // drop the cut first line
+  } finally {
+    await fh.close();
+  }
+}
+
 function parseLines(text: string, from: number, to: number): Rec[] {
   const out: Rec[] = [];
   for (const line of text.split("\n")) {
@@ -254,14 +284,18 @@ export async function readTeamTranscript(startedAt: string, endedAt?: string): P
   const files = await jsonlFiles(dir);
   if (!files.length) return { steps: [], agents: [], note: `No Claude Code transcripts found in ${dir}.` };
   const recent: string[] = [];
+  const sizes = new Map<string, number>();
   for (const f of files) {
     const st = await stat(f).catch(() => null);
-    if (st && st.mtimeMs >= from && st.size < 200_000_000) recent.push(f);
+    if (st && st.mtimeMs >= from && st.size < 200_000_000) {
+      recent.push(f);
+      sizes.set(f, st.size);
+    }
   }
   let lead: { file: string; recs: Rec[] } | undefined;
   const subs: Array<{ file: string; recs: Rec[] }> = [];
   for (const f of recent) {
-    const text = await readFile(f, "utf8").catch(() => "");
+    const text = await readRecent(f, sizes.get(f) ?? 0, from);
     const recs = parseLines(text, from, to);
     if (!recs.length) continue;
     const side = recs.every((r) => r.isSidechain) || /subagents|\/agent-[^/]+\.jsonl$/.test(f);
@@ -401,7 +435,8 @@ export async function readClaudeSession(id: string): Promise<TeamTranscript & { 
   const live = Date.now() - Math.max(st.mtimeMs, ...subStats.map((s) => s?.mtimeMs ?? 0)) < LIVE_MS;
   const hit = cache.get(id);
   if (hit?.key === key) return { ...hit.tx, live };
-  const recs = parseLines(await readFile(main, "utf8"), 0, Infinity).filter((r) => !r.isSidechain);
+  // the view shows the latest 800 steps: a long session's last 12 MB holds far more than that
+  const recs = parseLines(await readRecent(main, st.size, -Infinity, 12 * 1024 * 1024), 0, Infinity).filter((r) => !r.isSidechain);
   const subs: Array<{ file: string; recs: Rec[] }> = [];
   for (const f of subFiles) {
     const r = parseLines(await readFile(f, "utf8").catch(() => ""), 0, Infinity);

@@ -1,4 +1,5 @@
 "use client";
+import { TodayMoney } from "@/components/TodayMoney";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentSessionView, AgentToolbox } from "@/components/AgentSessionView";
@@ -82,6 +83,24 @@ export default function DeskPage() {
   const [live, setLive] = useState<AgentSession>();
   // "All Claude Code sessions": any session of this project on this machine, not only the trade team's
   const [allCc, setAllCc] = useState(false);
+  // "Claude's session" folds away; the choice is remembered on this browser
+  const [ccOpen, setCcOpen] = useState(true);
+  useEffect(() => {
+    try {
+      setCcOpen(localStorage.getItem("dodona.claudeSessionOpen") !== "0");
+    } catch {
+      /* private window */
+    }
+  }, []);
+  const toggleCc = () =>
+    setCcOpen((o) => {
+      try {
+        localStorage.setItem("dodona.claudeSessionOpen", o ? "0" : "1");
+      } catch {
+        /* private window */
+      }
+      return !o;
+    });
   const [ccList, setCcList] = useState<ClaudeSessionInfo[]>();
   const [ccPick, setCcPick] = useState<string>();
   const [ccErr, setCcErr] = useState<string>();
@@ -121,6 +140,12 @@ export default function DeskPage() {
   }, [allCc]);
   const [pick, setPick] = useState<string>();
   const [replay, setReplay] = useState(false); // the user asked for a past session while the floor is closed
+  // a new team run takes over the floor, even from a past session someone was replaying
+  const newest = d?.sessions?.[0]?.id;
+  useEffect(() => {
+    setPick(undefined);
+    setReplay(false);
+  }, [newest]);
 
   const load = useCallback(async () => {
     try {
@@ -234,7 +259,8 @@ export default function DeskPage() {
   // the floor talks only while something is happening: market open, or a team run going (the 9:15
   // screen, the 4:10 review). Otherwise it's closed, until you pick a past session to replay.
   const teamLive = (running && !!live) || saved.some((x) => x.status === "running");
-  const floorIdle = !d.market.open && !teamLive && !replay;
+  // the floor only talks while a team run is going; between runs (market open or not) it's quiet
+  const floorIdle = !teamLive && !replay;
   const today = st.today;
   const nextRunIn = auto && d.lastRunAt ? Math.max(0, Date.parse(d.lastRunAt) + AUTO_MS - Date.now()) : undefined;
 
@@ -252,6 +278,8 @@ export default function DeskPage() {
           <Link className="btn ghost" href="/settings">Settings</Link>
         </div>
       </div>
+
+      <TodayMoney />
 
       {/* ---- hero */}
       {practice && <div className="paper-watermark" aria-hidden>PAPER DESK</div>}
@@ -330,6 +358,9 @@ export default function DeskPage() {
         </div>
       </section>
 
+      {/* ---- orders waiting for the user's approval: top of the Desk on every tab, only when there's something to do */}
+      {!practice && <IbkrOrderPanel />}
+
       {/* ---- the team's runs: its own card, apart from the account numbers */}
       <section className="panel dk-runs">
         <div className="dk-runs-head">
@@ -358,7 +389,7 @@ export default function DeskPage() {
                 </div>
               ) : (
               <button
-                className={`btn ${d.realOrders?.on ? "danger" : "primary"}`}
+                className="btn primary"
                 disabled={teamBusy}
                 title={d.realOrders?.on ? "Starts /trade-desk live in Claude Code: the team prepares today's IBKR batch for you to approve below. It places nothing." : "Starts /trade-desk in Claude Code: one paper cycle by the team."}
                 onClick={async () => {
@@ -369,11 +400,11 @@ export default function DeskPage() {
                   setTeamTick((x) => x + 1);
                 }}
               >
-                {teamBusy ? <Spinner /> : d.realOrders?.on ? "Run desk now · prepare IBKR batch" : "Run desk now · team cycle"}
+                {teamBusy ? <Spinner /> : d.realOrders?.on ? "▶ Ask the team to look now" : "▶ Run a team cycle now"}
               </button>
               )}
               <div className="tr-card">
-                {!!d.realOrders?.autoBatch?.length && <NextRunCountdown times={d.realOrders.autoBatch} />}
+                {!!d.realOrders?.autoBatch?.length && <NextRunCountdown times={d.realOrders.autoBatch} watch={d.realOrders.watch} />}
                 <TeamRunStatus tick={teamTick} />
               </div>
             </>
@@ -401,8 +432,6 @@ export default function DeskPage() {
 
       {(tab === "today" || (!practice && PRACTICE_TABS.has(tab))) && (
         <div className="dk-tab">
-          {/* ---- the real-account order tickets (IBKR), off until turned on in Settings */}
-          <IbkrOrderPanel />
           {/* ---- every stock the team analyzed: its chart, the chartist's read, the verdict, its ticket */}
           <section className="panel">
             <div className="row" style={{ marginBottom: 4 }}>
@@ -419,30 +448,34 @@ export default function DeskPage() {
       {tab === "session" && (
         <div className="dk-tab">
           {/* ---- the team on its trading floor, talking: replays the picked session, live while it runs */}
-          {!allCc && (shown?.model === TEAM_MODEL || (!shown && d.driver === "team")) && (
+          {(shown?.model === TEAM_MODEL || (!shown && d.driver === "team")) && (
             <section className="panel">
               <div className="row" style={{ marginBottom: 8 }}>
                 <h2 style={{ margin: 0 }}>✦ Trading floor</h2>
                 <span className="spacer" />
                 {floorIdle ? (
-                  <span className="small muted">Closed · {d.market.reason} · pick a session in the list below to replay it</span>
+                  <span className="small muted">{d.market.open ? "Between runs" : `Closed · ${d.market.reason}`} · press Replay to watch the last session</span>
                 ) : (
                   <>
-                    <span className="small muted">{shown ? new Date(shown.startedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""} · pick another session in the list below</span>
-                    {replay && !d.market.open && !teamLive && <button className="btn ghost" onClick={() => { setReplay(false); setPick(undefined); }}>Close replay</button>}
+                    <span className="small muted">{shown ? new Date(shown.startedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}</span>
+                    {replay && !teamLive && <button className="btn ghost" onClick={() => { setReplay(false); setPick(undefined); }}>Close replay</button>}
                   </>
                 )}
               </div>
               <TradingFloor
                 session={shown?.id}
-                idle={floorIdle ? { title: `Market closed · ${d.market.reason}`, note: "No team run is going, so the floor is off the clock. The team's real messages come back with the next run.", onReplay: saved.length ? () => setReplay(true) : undefined } : undefined}
+                idle={floorIdle ? { title: d.market.open ? "Between runs" : `Market closed · ${d.market.reason}`, note: d.market.open ? "No team run is going right now, so the floor is on a break. The team's real messages show here as soon as the next run starts." : "No team run is going, so the floor is off the clock. The team's real messages come back with the next run.", onReplay: saved.length ? () => setReplay(true) : undefined } : undefined}
               />
             </section>
           )}
           <section className="panel" style={{ marginTop: 14 }}>
-            <div className="row" style={{ marginBottom: 10 }}>
-              <h2 style={{ margin: 0 }}>✦ Claude&apos;s session</h2>
+            <div className="row" style={{ marginBottom: ccOpen ? 10 : 0 }}>
+              <button className="cc-fold" onClick={toggleCc} aria-expanded={ccOpen} title={ccOpen ? "Collapse" : "Expand"}>
+                <span className={`cc-caret${ccOpen ? " open" : ""}`}>▸</span>
+                <h2 style={{ margin: 0 }}>✦ Claude&apos;s session</h2>
+              </button>
               <span className="spacer" />
+              {ccOpen && (<>
               <label className="small muted" style={{ display: "inline-flex", gap: 6, alignItems: "center", marginRight: 8 }} title="Show any Claude Code session of this project on this computer (this one included), not only the trade team's">
                 <input type="checkbox" checked={allCc} onChange={() => setAllCc(!allCc)} /> All Claude Code sessions
               </label>
@@ -466,8 +499,9 @@ export default function DeskPage() {
                   ))}
                 </select>
               )}
+              </>)}
             </div>
-            {allCc ? (
+            {!ccOpen ? null : allCc ? (
               ccErr ? (
                 <div className="err">{ccErr}</div>
               ) : !ccList ? (

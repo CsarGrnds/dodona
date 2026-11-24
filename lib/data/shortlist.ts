@@ -2,7 +2,7 @@
 // from Yahoo's daily spark feed (20 symbols a request), written to trader/shortlist.json. The
 // `trade-prep` agent then checks news on the best ones and drops AVOIDs with dropFromShortlist.
 // The live runs' `desk pending` scan looks only at today's kept names when the file is today's.
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { countReasons, isPick, rankShortlist, return20, screenDaily, type Screened, type ShortlistPick } from "../shortlist";
 import { nyClock } from "../setups";
@@ -49,6 +49,9 @@ export async function buildShortlist(opts: { maxPrice: number; exclude?: string[
     reasons: countReasons(screened),
   };
   await writeFile(FILE(), JSON.stringify(doc, null, 2) + "\n");
+  // kept per day, so the coach's review can audit that day's names even after tomorrow's list replaces it
+  await mkdir(resolve(process.cwd(), "trader", "learning", "shortlists"), { recursive: true });
+  await writeFile(resolve(process.cwd(), "trader", "learning", "shortlists", `${date}.json`), JSON.stringify(doc, null, 2) + "\n");
   return doc;
 }
 

@@ -248,7 +248,7 @@ export function TradingFloor({ session, idle }: { session?: string; idle?: { tit
   const shown = cur && involves(cur, pick) ? cur : undefined;
   const pu = pick ? usage.get(pick) : undefined;
   // the LED tape: the stocks this session analyzed, with their levels, chart score and verdict
-  const head = isIdle ? "■ CLOSED   " : `${live ? "● LIVE" : "▶ REPLAY"} ${win ? new Date(win.start).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) + " ET" : ""}   `;
+  const head = isIdle ? (idle?.title.startsWith("Between") ? "■ ON BREAK   " : "■ CLOSED   ") : `${live ? "● LIVE" : "▶ REPLAY"} ${win ? new Date(win.start).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) + " ET" : ""}   `;
   const items = isIdle
     ? [{ sym: idle.title.toUpperCase(), lv: "", sc: "", v: undefined }]
     : tape.length
@@ -487,7 +487,7 @@ export function TradingFloor({ session, idle }: { session?: string; idle?: { tit
             <b>{idle.title}</b>
           </div>
           <p className="small muted">{idle.note}</p>
-          <p className="small muted">The team&apos;s messages show here again as soon as a run starts. Every past session&apos;s log stays in the list below.</p>
+          <p className="small muted">The team&apos;s messages show here again as soon as a run starts. Every past session&apos;s log stays in Claude&apos;s session, below.</p>
           {idle.onReplay && <button className="btn" onClick={idle.onReplay}>▶ Replay the last session</button>}
         </aside>
       ) : (

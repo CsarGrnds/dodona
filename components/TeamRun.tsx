@@ -3,6 +3,7 @@
 // the desk: /trade-desk live (prepares the IBKR batch; places nothing) or /trade-desk (a paper cycle).
 // Shows whether it's running, its latest steps and its answer, and lets you stop it.
 import { useCallback, useEffect, useState } from "react";
+import { SessionCard } from "@/components/SessionCard";
 import { Spinner } from "@/components/ui";
 import { nextAutoRun } from "@/lib/autoBatch";
 import type { LiveRun } from "@/lib/data/liveRun";
@@ -54,7 +55,8 @@ export function TeamRunStatus({ tick }: { tick: number }) {
         )}
       </div>
       {r.running && r.lines.length > 0 && <div className="muted tr-last">{r.lines[r.lines.length - 1]}</div>}
-      {!r.running && (r.result || r.error) && <div className={`tr-result ${r.error ? "err" : "muted"}`}>{plainResult(r.error ?? r.result ?? "")}</div>}
+      {!r.running && (r.result || r.error) && <div className={`tr-result ${r.error ? "err" : "muted"}`}>{r.error ? plainResult(r.error) : headline(r.result ?? "")}</div>}
+      {!r.running && <SessionCard tick={tick} />}
     </div>
   );
 }
@@ -66,8 +68,16 @@ function plainResult(text: string): string {
   return text.replace(/\*\*|`/g, "").slice(0, 400);
 }
 
+/** The run's answer as one line: its first sentence, before any table or list. The facts come from the session card. */
+function headline(text: string): string {
+  const plain = plainResult(text);
+  if (plain !== text.replace(/\*\*|`/g, "").slice(0, 400)) return plain; // the usage-limit sentence
+  const prose = plain.split(/\n|\s\|/)[0].trim();
+  return (prose.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? prose).slice(0, 220);
+}
+
 /** "Next team run 12:00 New York · in 26:14", ticking every second. */
-export function NextRunCountdown({ times }: { times: string[] }) {
+export function NextRunCountdown({ times, watch = 0 }: { times: string[]; watch?: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -80,8 +90,11 @@ export function NextRunCountdown({ times }: { times: string[] }) {
   const left = h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}:${String(sec).padStart(2, "0")}`;
   const local = new Date(next.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   return (
-    <div className="tr-next small" title={`Batch times (New York): ${times.join(", ")}. Change them in Settings → Broker.`}>
-      <span className="muted">Next team run</span> <b>{next.dayLabel === "today" ? "" : `${next.dayLabel} `}{next.time} New York</b>
+    <div
+      className="tr-next small"
+      title={watch ? `Every ${watch} minutes from 9:46 AM to 3:00 PM New York, Dodona checks the shortlist itself (no Claude) and starts the team only when a range is ready. Change it in Settings → Broker.` : `Batch times (New York): ${times.join(", ")}. Change them in Settings → Broker.`}
+    >
+      <span className="muted">{watch ? `Looking every ${watch} min · next look` : "Next team run"}</span> <b>{next.dayLabel === "today" ? "" : `${next.dayLabel} `}{next.time} New York</b>
       <span className="muted"> ({local} your time)</span> · <b className="mono tr-count">{s < 60 ? "starting…" : `in ${left}`}</b>
     </div>
   );

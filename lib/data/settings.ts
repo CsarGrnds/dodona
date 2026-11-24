@@ -4,6 +4,7 @@
 // options, broker…) are kept exactly as they are.
 import { copyFile, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { applyBudget, BUDGET_DEFAULTS } from "@/lib/budget";
 import { DEFAULT_DESK_RULES } from "@/lib/desk";
 import { deskAgentEnabled, deskModel } from "@/lib/deskAgent";
 import { AGENT_MODELS, LOCKED, TEAM, validateRules, type AgentModel } from "@/lib/settings";
@@ -28,7 +29,7 @@ export async function readSettings() {
   const { cfg, fromFile } = await readConfigRaw();
   const desk = await readDesk().catch(() => null);
   return {
-    rules: { ...DEFAULT_DESK_RULES, max_orders_per_day: 10, broker: "alpaca", ibkr_orders: false, one_click: false, max_fee_pct: 25, auto_batch: false, auto_batch_times: "09:47, 11:00, 13:00", ...cfg },
+    rules: { ...DEFAULT_DESK_RULES, max_orders_per_day: 10, broker: "alpaca", ibkr_orders: false, one_click: false, max_fee_pct: 25, auto_batch: false, auto_batch_times: "09:47, 11:00, 13:00", auto_from_budget: false, watch_every_min: 0, ...BUDGET_DEFAULTS, ...cfg },
     locked: LOCKED.map((l) => ({ ...l, value: cfg[l.key] ?? l.safe })),
     fromFile,
     file: "trader/config.json",
@@ -66,7 +67,8 @@ export async function saveSettings(patch: SettingsPatch): Promise<SaveResult> {
   const saved: string[] = [];
   if (rules && Object.keys(rules).length) {
     const { cfg, fromFile } = await readConfigRaw();
-    const next = { ...cfg, ...rules };
+    // with "Limits from the budget" on, the dollar limits follow the saved budget (even when only the budget was sent)
+    const next = applyBudget({ ...BUDGET_DEFAULTS, ...cfg, ...rules });
     if (fromFile) await copyFile(configPath(), configPath().replace(/\.json$/, ".prev.json")); // one step of undo
     const tmp = `${configPath()}.tmp`;
     await writeFile(tmp, JSON.stringify(next, null, 2) + "\n");

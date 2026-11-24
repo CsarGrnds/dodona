@@ -27,6 +27,32 @@ export function dueSlot(times: string[], nowMinute: number, done: string[]): str
   });
 }
 
+/** The watch window, New York minutes: from 9:46 (the opening range is formed) to 15:00. */
+export const WATCH_FROM = 9 * 60 + 46;
+export const WATCH_TO = 15 * 60;
+
+/**
+ * The watch: every `every` minutes in the window, Dodona scans the shortlist itself (code, no Claude),
+ * and wakes the trade team only when a range is ready. Returns this minute's slot key ("watch-09:56"),
+ * or undefined outside the window or when it's off.
+ */
+export function watchSlot(nowMinute: number, every: number): string | undefined {
+  if (!(every >= 1) || nowMinute < WATCH_FROM || nowMinute > WATCH_TO) return undefined;
+  const m = WATCH_FROM + Math.floor((nowMinute - WATCH_FROM) / every) * every;
+  return `watch-${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+
+/** Every watch time of the day, "HH:MM" New York (for the Desk's countdown). */
+export function watchTimes(every: number): string[] {
+  const out: string[] = [];
+  if (!(every >= 1)) return out;
+  for (let m = WATCH_FROM; m <= WATCH_TO; m += every) out.push(`${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`);
+  return out;
+}
+
+/** Ready names the team hasn't worked on yet today: only these wake it again. */
+export const freshReady = (ready: string[], worked: string[]) => ready.filter((s) => !worked.includes(s.toUpperCase()));
+
 /**
  * The next scheduled team run: today's next time if the market trades today, else the first time on
  * the next trading day (NYSE holidays skipped). `at` is epoch ms (exact except across a DST change).
@@ -73,7 +99,7 @@ export function openNote(x: OpenNoteInput): string {
     lines.push(`Shortlist: ${kept.length} names${top ? ` (${top}${kept.length > 6 ? ", …" : ""})` : ""}${drop.length ? `, ${drop.join(", ")} dropped on news` : ""}.`);
   }
   const next = x.times.find((t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3)) > x.nowMinute);
-  lines.push(next ? `First batch check at ${ampm(next)} New York. If a trade passes risk you'll get a text: approve it on your Mac within 15 minutes.` : "No batch times left today.");
+  lines.push(next ? `First batch check at ${ampm(next)} New York. If a trade passes risk you'll get a text: approve it at the top of the Desk (localhost:3000/desk) on your Mac within 15 minutes.` : "No batch times left today.");
   return lines.join(" ");
 }
 

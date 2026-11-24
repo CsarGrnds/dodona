@@ -17,7 +17,8 @@
 //   npm run desk -- pending [--all]               formed-not-broken ranges: today's shortlist only, or the whole market with --all
 import { appendFile, mkdir, readdir, rename, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { learningStats, replay, type Candidate, type Replay } from "../lib/learning";
+import { rulesBrief } from "../lib/budget";
+import { auditStats, learningStats, replay, ruleAudit, type AuditRow, type Candidate, type Replay } from "../lib/learning";
 import { scanPending } from "../lib/data/pending";
 import { buildShortlist, dropFromShortlist, readShortlist, todaysShortlist } from "../lib/data/shortlist";
 import { marketStatus, nextBell } from "../lib/clock";
@@ -43,6 +44,7 @@ import { getIntraday, getQuote } from "../lib/data";
 import { loadOrCreateDesk, readDeskRules, withDeskLock, writeDesk } from "../lib/data/desk";
 import { runDesk } from "../lib/data/deskRun";
 import { acceptTeamOrder, paperFile, paperRoot, writePaperWorkspace } from "../lib/data/paper";
+import { PRACTICE_OFF, practiceOn } from "../lib/data/practice";
 import { nyClock } from "../lib/setups";
 
 const argv = process.argv.slice(2);
@@ -65,7 +67,7 @@ function account(s: DeskState, rules: DeskRules, nowMs: number) {
   const bell = nextBell(nowMs);
   const opened = s.positions.filter((p) => p.entryDate === date).length + s.trades.filter((t) => t.entryDate === date).length;
   return {
-    paper: true,
+    ledger: "PRACTICE ledger (fake money). This is not the real-money setting: that is \"paper\" in trader/config.json at the repo root.",
     newYork: `${ms.weekday} ${date} ${ms.nowLabel}`,
     market: { open: ms.open, reason: ms.reason, nextBell: `${bell.kind} at ${bell.label} ${bell.weekday}`, minutesToBell: Math.round((bell.at - nowMs) / 60_000) },
     entryWindow: { from: rules.no_entries_before, to: rules.no_entries_after, flatBy: rules.flat_by, openNow: ms.open && minute >= minuteOf(rules.no_entries_before) && minute <= minuteOf(rules.no_entries_after) },
@@ -102,6 +104,8 @@ async function main() {
         break;
 
       case "prep": {
+        // the practice ledger only runs in paper mode; a real-money run has nothing to prep here
+        if (!(await practiceOn())) fail(`${PRACTICE_OFF} \`desk prep\` manages the practice ledger, so it doesn't run now. A live run starts with \`stage clear\`.`);
         s.driver = "team";
         const report = await runDesk(s, rules, { manageOnly: true, useAgent: false });
         await writePaperWorkspace(s, today);
@@ -117,6 +121,7 @@ async function main() {
       }
 
       case "book": {
+        if (!(await practiceOn())) fail(`${PRACTICE_OFF} \`desk book\` books on the practice ledger, so it doesn't run now. Real trades are staged (\`desk stage add\`) and the user approves them in Dodona.`);
         const style = (flag("style") ?? "day") as Style;
         if (style !== "day" && style !== "swing") fail("--style day|swing");
         const thesis = flag("thesis") ?? "";
@@ -178,7 +183,9 @@ async function main() {
           for (const x of s.sessions ?? []) if (x.status === "running" && x.model === TEAM) Object.assign(x, { status: "error", error: "superseded by a new session", endedAt: at });
           const sess: AgentSession = { id: `T-${nowMs.toString(36)}`, startedAt: at, model: TEAM, status: "running", trigger: flag("trigger") ?? "Trade desk cycle", steps: [], toolCalls: 0, rounds: 0, usage: { input: 0, output: 0, cacheRead: 0 }, transcript: flag("transcript") };
           s.sessions = [sess, ...(s.sessions ?? [])].slice(0, SESSIONS_MAX);
-          result = { ok: true, session: sess.id };
+          // the rules in force right now, read fresh: the team works from these, never from an earlier run
+          const cfg = JSON.parse(await readFile(resolve(process.cwd(), "trader", "config.json"), "utf8").catch(() => "{}"));
+          result = { ok: true, session: sess.id, rules: rulesBrief(cfg), rulesNote: "Read from trader/config.json just now. Use these numbers for this run. If the user changes them mid-run, the scripts (size.py, check.py, desk stage) read the file again and win." };
         } else if (sub === "end") {
           const sess = currentSession(s);
           if (!sess) fail("no running team session");
@@ -210,6 +217,9 @@ async function main() {
         // today's pre-market shortlist when there is one (trade-screener built it); --all scans the whole market
         const listed = argv.includes("--all") ? null : await todaysShortlist();
         const scan = await scanPending({ ...(listed ? { symbols: listed } : {}), maxPrice, exclude: [...held, ...rules.blocked], limit: Number(flag("limit")) || 8, confirm: Number(flag("confirm")) || 150, ...(flag("min-range") ? { minRangePct: Number(flag("min-range")) } : {}) });
+        // every scan is kept for the Desk's session card: what each run looked at and why nothing was ready
+        await mkdir(real("runs"), { recursive: true });
+        await appendFile(real(`runs/scans-${nyClock(nowMs).date}.jsonl`), JSON.stringify({ at: scan.at, source: listed ? "shortlist" : "market", universe: scan.universe, early: scan.early, checked: scan.confirmed, rejected: scan.rejected, ready: scan.pending.map((x) => x.symbol) }) + "\n").catch(() => undefined);
         result = { ...scan, source: listed ? `today's shortlist (${listed.length} names)` : "the whole market (no shortlist for today)", maxPrice, excludedHeld: held.length, next: "for the best ones: trade-chartist, then trade-exit with --entry <orHigh> --or-high <orHigh> --or-low <orLow> --setup orb, Time Machine, budget, stage add" };
         break;
       }
@@ -275,11 +285,35 @@ async function main() {
         const day = all.filter((c) => c.date === date);
         const replays: Replay[] = [];
         for (const c of day) replays.push(replay(c, await getIntraday(c.symbol).catch(() => []), minuteOf(rules.flat_by)));
+        // the rule audit: every stock on that day's shortlist, as the 9:46 scan saw it and as if bought anyway
+        const archived = JSON.parse(await readFile(join(dir, "shortlists", `${date}.json`), "utf8").catch(() => "null"));
+        const current = JSON.parse(await readFile(resolve(process.cwd(), "trader", "shortlist.json"), "utf8").catch(() => "null"));
+        const sl = archived ?? (current?.date === date ? current : null);
+        const names: string[] = (sl?.kept ?? []).map((k: { symbol: string }) => k.symbol);
+        const bars: Record<string, Awaited<ReturnType<typeof getIntraday>>> = {};
+        for (const sym of names) bars[sym] = await getIntraday(sym).catch(() => []);
+        const audit = ruleAudit(date, bars, minuteOf(rules.flat_by));
         await mkdir(join(dir, "reviews"), { recursive: true });
-        if (day.length) await writeFile(join(dir, "reviews", `${date}.json`), JSON.stringify({ date, reviewed_at: at, replays }, null, 2) + "\n");
+        // written every day, even with no candidates: the audit is data too, and the file marks the day reviewed
+        await writeFile(join(dir, "reviews", `${date}.json`), JSON.stringify({ date, reviewed_at: at, replays, audit }, null, 2) + "\n");
         const history: Replay[] = [];
-        for (const f of (await readdir(join(dir, "reviews")).catch(() => [] as string[])).filter((f) => f.endsWith(".json"))) history.push(...(JSON.parse(await readFile(join(dir, "reviews", f), "utf8")).replays ?? []));
-        result = { date, candidates: day.length, replays: replays.map((r) => ({ symbol: r.symbol, mode: r.mode, verdict: r.verdict, outcome: r.outcome, R: r.R, triggeredAt: r.triggeredAt, exitAt: r.exitAt, rightCall: r.rightCall, chartScore: r.chartScore, why: r.why })), today: learningStats(replays), allTime: learningStats(history), playbook: "trader/playbook.md" };
+        const auditHistory: AuditRow[] = [];
+        let auditDays = 0;
+        for (const f of (await readdir(join(dir, "reviews")).catch(() => [] as string[])).filter((f) => f.endsWith(".json"))) {
+          const doc = JSON.parse(await readFile(join(dir, "reviews", f), "utf8"));
+          history.push(...(doc.replays ?? []));
+          auditHistory.push(...(doc.audit ?? []));
+          if (doc.audit?.length) auditDays++;
+        }
+        result = {
+          date,
+          candidates: day.length,
+          replays: replays.map((r) => ({ symbol: r.symbol, mode: r.mode, verdict: r.verdict, outcome: r.outcome, R: r.R, triggeredAt: r.triggeredAt, exitAt: r.exitAt, rightCall: r.rightCall, chartScore: r.chartScore, why: r.why })),
+          today: learningStats(replays),
+          allTime: learningStats(history),
+          ruleAudit: { shortlisted: names.length, today: auditStats(audit), allTime: auditStats(auditHistory), days: auditDays, note: "each rule: stocks it kept out at 9:46, how many would have triggered, their average R if bought anyway (stop at the range low, target 2R). 'passed the scan' is what the scan let through." },
+          playbook: "trader/playbook.md",
+        };
         break;
       }
 
