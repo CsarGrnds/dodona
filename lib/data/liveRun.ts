@@ -13,11 +13,14 @@ import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { dueSlot, freshReady, openNote, parseAutoTimes, runNote, watchSlot } from "../autoBatch";
+import { dueSlot, openNote, parseAutoTimes, runNote, watchSlot } from "../autoBatch";
+import { buildBoard, dueForTeam, latestDecisions, type Board } from "../board";
 import { rulesBrief } from "../budget";
 import { normalizeDeskRules } from "../desk";
 import { marketStatus, tradingDay } from "../clock";
 import { gatewayStatus, syncFromGateway } from "./ibkr";
+import { nyClock } from "../setups";
+import { getIntraday } from "./index";
 import { scanPending } from "./pending";
 import { todaysShortlist } from "./shortlist";
 import { PRACTICE_OFF, practiceOn } from "./practice";
@@ -32,7 +35,7 @@ interface RunState {
   mode?: RunMode;
 }
 
-export type RunMode = "live" | "paper" | "review" | "screen";
+export type RunMode = "live" | "paper" | "review" | "screen" | "research";
 
 export interface LiveRun {
   mode?: RunMode;
@@ -66,6 +69,8 @@ const ALLOWED = [
 ];
 // the coach may edit the playbook, and nothing else
 const REVIEW_ALLOWED = ["Edit(trader/playbook.md)", "Write(trader/playbook.md)", "Edit(./trader/playbook.md)", "Write(./trader/playbook.md)"];
+// the strategist runs the backtest and writes its report, and nothing else
+const RESEARCH_ALLOWED = ["Bash(npm run -s research:*)", "Bash(npm run research:*)", "Write(trader/research/report.md)", "Write(./trader/research/report.md)", "Edit(trader/research/report.md)", "Edit(./trader/research/report.md)"];
 const BLOCKED_ALWAYS = ["NotebookEdit", "WebFetch", "WebSearch", "Bash(curl:*)", "Bash(wget:*)", "Bash(rm:*)", "Bash(git:*)"];
 const BLOCKED = ["Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Bash(curl:*)", "Bash(wget:*)", "Bash(rm:*)", "Bash(git:*)"];
 const NOTE =
@@ -84,7 +89,7 @@ async function state(): Promise<RunState | null> {
   return JSON.parse(await readFile(STATE(), "utf8").catch(() => "null"));
 }
 
-export async function startLiveRun(mode: RunMode = "live", arg?: string): Promise<{ ok: boolean; error?: string; run?: LiveRun }> {
+export async function startLiveRun(mode: RunMode = "live", arg?: string, context?: string): Promise<{ ok: boolean; error?: string; run?: LiveRun }> {
   const st = await state();
   if (st && alive(st.pid)) return { ok: false, error: "A run is already going." };
   // a paper cycle is practice: none while paper mode is off (it would spend tokens on fake trades)
@@ -97,26 +102,29 @@ export async function startLiveRun(mode: RunMode = "live", arg?: string): Promis
   const at = new Date();
   const log = join(dir(), `live-${at.toISOString().replace(/[:.]/g, "-")}.jsonl`);
   const fd = openSync(log, "a");
+  // a run the watch started for some stocks sees only those: `desk pending` reads DESK_ONLY even when the
+  // lead forgets --only, so stocks earlier runs already worked today never go through the team again
+  const only = mode === "live" && arg && /^[A-Z][A-Z0-9.]{0,9}(,[A-Z][A-Z0-9.]{0,9})*$/.test(arg) ? arg : undefined;
   const child = spawn(
     process.env.CLAUDE_BIN || "claude",
     [
       "-p",
       // the argument is checked to be plain dates or tickers: it lands in the run's prompt
-      mode === "live" ? `/trade-desk live${arg && /^[A-Z][A-Z0-9.]{0,9}(,[A-Z][A-Z0-9.]{0,9})*$/.test(arg) ? ` ${arg}` : ""}` : mode === "review" ? `/trade-desk review${arg && /^\d{4}-\d{2}-\d{2}$/.test(arg) ? ` ${arg}` : ""}` : mode === "screen" ? "/trade-desk screen" : "/trade-desk",
+      mode === "live" ? `/trade-desk live${arg && /^[A-Z][A-Z0-9.]{0,9}(,[A-Z][A-Z0-9.]{0,9})*$/.test(arg) ? ` ${arg}` : ""}` : mode === "review" ? `/trade-desk review${arg && /^\d{4}-\d{2}-\d{2}$/.test(arg) ? ` ${arg}` : ""}` : mode === "screen" ? "/trade-desk screen" : mode === "research" ? "/trade-desk research" : "/trade-desk",
       "--output-format",
       "stream-json",
       "--verbose",
       "--allowedTools",
       ...ALLOWED,
-      ...(mode === "review" ? REVIEW_ALLOWED : []),
+      ...(mode === "review" ? REVIEW_ALLOWED : mode === "research" ? RESEARCH_ALLOWED : []),
       "--disallowedTools",
-      ...(mode === "review" ? BLOCKED_ALWAYS : BLOCKED),
+      ...(mode === "review" || mode === "research" ? BLOCKED_ALWAYS : BLOCKED),
       // a live run can't see the practice workspace at all: its copy of the rules says paper: true
       ...(mode === "live" ? ["Read(./trader/paper/**)", "Glob(./trader/paper/**)", "Grep(./trader/paper/**)", "Bash(cd trader/paper:*)"] : []),
       "--append-system-prompt",
-      `${NOTE} The user's rules right now (trader/config.json, read when this run started): ${rulesBrief(cfg)}. Use these, never numbers from an earlier run or from the skill's examples, and tell every subagent the ones it needs.`,
+      `${NOTE} The user's rules right now (trader/config.json, read when this run started): ${rulesBrief(cfg)}. Use these, never numbers from an earlier run or from the skill's examples, and tell every subagent the ones it needs.${only ? ` This run is for ${only} only: \`npm run -s desk -- pending --only ${only}\`, and work no other stock.` : ""}${context ? ` ${context}` : ""}`,
     ],
-    { cwd: process.cwd(), detached: true, stdio: ["ignore", fd, fd], env: process.env },
+    { cwd: process.cwd(), detached: true, stdio: ["ignore", fd, fd], env: only ? { ...process.env, DESK_ONLY: only } : process.env },
   );
   closeSync(fd);
   if (!child.pid) return { ok: false, error: "Couldn't start Claude Code (is the `claude` command installed? Set CLAUDE_BIN in .env.local)." };
@@ -222,6 +230,32 @@ export async function maybeStartReview(now = new Date()): Promise<"started" | "n
   await mkdir(dir(), { recursive: true });
   await writeFile(REVIEW_TRIES(), JSON.stringify({ day, n: n + 1, at: now.getTime() }));
   return (await startLiveRun("review", day)).ok ? "started" : "busy";
+}
+
+const RESEARCH_TRIES = () => join(dir(), "research-tries.json");
+
+/** Saturday from 10 AM New York, or Sunday if Dodona was off: the strategist's weekly research run. */
+export function researchDue(now: Date, lastRanAt?: string): boolean {
+  const ny = nyNow(now);
+  const dow = new Date(`${ny.date}T12:00:00Z`).getUTCDay(); // 6 Saturday, 0 Sunday
+  if (!(dow === 6 || dow === 0) || ny.minute < 10 * 60) return false;
+  return !lastRanAt || now.getTime() - Date.parse(lastRanAt) > 4 * 86_400_000;
+}
+
+/** The weekly research run, while Dodona is running and real orders are on. One try a day. */
+export async function maybeStartResearch(now = new Date()): Promise<string> {
+  const cfg = ((await readJsonFile(resolve(process.cwd(), "trader", "config.json"))) ?? {}) as Record<string, unknown>;
+  if (cfg.auto_batch !== true || cfg.ibkr_orders !== true) return "off";
+  const latest = await readJsonFile(resolve(process.cwd(), "trader", "research", "latest.json"));
+  const report = await readFile(resolve(process.cwd(), "trader", "research", "report.md"), "utf8").catch(() => "");
+  if (!researchDue(now, report && latest?.ranAt ? latest.ranAt : undefined)) return "not due";
+  const day = nyNow(now).date;
+  if ((await readJsonFile(RESEARCH_TRIES()))?.day === day) return "tried today";
+  const st = await state();
+  if (st && alive(st.pid)) return "busy";
+  await mkdir(dir(), { recursive: true });
+  await writeFile(RESEARCH_TRIES(), JSON.stringify({ day, at: now.getTime() }));
+  return (await startLiveRun("research")).ok ? "started" : "busy";
 }
 
 // ---------------------------------------------------------------- the batch, by itself
@@ -341,24 +375,58 @@ export async function autoBatchTick(now = new Date()): Promise<string> {
   return r.ok ? `started ${slot}` : `not started: ${r.error}`;
 }
 
-type WatchDoc = { slots: string[]; worked?: string[] };
+type WatchDoc = { slots: string[]; worked?: string[]; workedAt?: Record<string, { at: string; rechecks: number }> };
+
+/** The board the scout writes on each look (trader/runs/board-{date}.json): the Desk reads it. */
+export const BOARD = (date: string) => join(dir(), `board-${date}.json`);
+
+/** SPY right now vs its VWAP today, for the "market" re-check. */
+async function spyNow(nowMs: number, date: string): Promise<Board["market"] | undefined> {
+  const bars = (await getIntraday("SPY").catch(() => [])).filter((b) => { const c = nyClock(b.t); return c.date === date && c.minute >= 570 && b.t + 5 * 60_000 <= nowMs; });
+  if (!bars.length) return undefined;
+  let pv = 0, v = 0;
+  for (const b of bars) { pv += ((b.high + b.low + b.close) / 3) * b.volume; v += b.volume; }
+  const spy = bars[bars.length - 1].close, vwap = v ? pv / v : spy;
+  return { spy: Math.round(spy * 100) / 100, vwap: Math.round(vwap * 100) / 100, aboveVwap: spy > vwap };
+}
 
 /**
- * One look at the shortlist, every `every` minutes from 9:46 to 3:00 New York: Dodona's own scan (code,
- * no Claude, no tokens). The trade team (`/trade-desk live`) starts only when a range is ready that it
- * hasn't worked on yet today. Like the batch times, it only prepares: the user approves on the Desk.
+ * The scout: one look at the shortlist, every `every` minutes from 9:46 to 3:00 New York. Dodona's own
+ * scan (code, no Claude, no tokens) writes the board every time, even while the team is busy. The team
+ * (`/trade-desk live`) is woken only for a stock that's ready and new today, or for a skip whose
+ * re-check reasons have all cleared (lib/board.ts). Like the batch times, it only prepares: the user
+ * approves on the Desk.
  */
 async function watchTick(cfg: Record<string, unknown>, ny: { date: string; minute: number }, now: Date, every: number, doneDoc: WatchDoc): Promise<string> {
   const slot = watchSlot(ny.minute, every);
   if (!slot) return "outside the watch window";
   if (doneDoc.slots.includes(slot)) return "watching";
+  doneDoc.slots.push(slot);
+  // older files kept a plain list: those stocks were worked earlier today
+  doneDoc.workedAt ??= Object.fromEntries((doneDoc.worked ?? []).map((s) => [s, { at: `${ny.date}T00:00:00Z`, rechecks: 0 }]));
+  await writeFile(AUTO_DONE(ny.date), JSON.stringify(doneDoc));
+  const listed = await todaysShortlist(now.getTime());
+  if (!listed?.length) return "no shortlist for today";
+  const rules = normalizeDeskRules(cfg);
+  const pf = await readJsonFile(resolve(process.cwd(), "trader", "portfolio.json"));
+  const held = ((pf?.positions ?? []) as Array<{ ticker?: string }>).map((p) => String(p.ticker ?? "").toUpperCase()).filter(Boolean);
+  const maxPrice = Math.min(rules.budget * (1 - rules.cash_buffer_pct / 100), (rules.budget * rules.max_position_pct) / 100, rules.max_order_usd);
+  const scan = await scanPending({ symbols: listed, maxPrice, exclude: [...held, ...rules.blocked], limit: 40, confirm: 150, nowMs: now.getTime() });
+  const ready = scan.pending.map((x) => x.symbol);
+  await appendFile(join(dir(), `scans-${ny.date}.jsonl`), JSON.stringify({ at: scan.at, source: "shortlist", by: "watch", universe: scan.universe, early: scan.early, checked: scan.confirmed, rejected: scan.rejected, ready }) + "\n").catch(() => undefined);
+  // the board: every stock's state, the team's latest call on it, what the scout waits for
+  const cands = (await readFile(resolve(process.cwd(), "trader", "learning", "candidates.jsonl"), "utf8").catch(() => ""))
+    .split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  const board = buildBoard({ date: ny.date, at: scan.at, status: scan.status ?? {}, decisions: latestDecisions(cands, ny.date), worked: doneDoc.workedAt, market: await spyNow(now.getTime(), ny.date) });
+  await writeFile(BOARD(ny.date), JSON.stringify(board));
+  const due = dueForTeam(board, now.getTime());
+  if (!due.fresh.length && !due.recheck.length) return ready.length ? `watch: ${ready.join(", ")} already worked today` : "watch: nothing ready";
+  // waking the team: only one run at a time, never over a batch waiting for the user, never without IBKR
   const st = await state();
-  if (st && alive(st.pid)) return "a run is going";
+  if (st && alive(st.pid)) return "a run is going (the board is up to date)";
   const risk = await readJsonFile(resolve(process.cwd(), "trader", "state", "risk.json"));
   const orders = await readJsonFile(resolve(process.cwd(), "trader", "orders.json"));
   if (orders?.orders?.length && risk?.checked_at && now.getTime() - Date.parse(risk.checked_at) < 15 * 60_000) return "a batch is waiting";
-  doneDoc.slots.push(slot);
-  await writeFile(AUTO_DONE(ny.date), JSON.stringify(doneDoc));
   const gw = await gatewayStatus().catch(() => ({ state: "down" as const }));
   if (gw.state !== "ready") {
     if (!doneDoc.slots.includes("watch-gateway-note")) {
@@ -368,21 +436,20 @@ async function watchTick(cfg: Record<string, unknown>, ny: { date: string; minut
     }
     return "gateway not ready";
   }
-  const listed = await todaysShortlist(now.getTime());
-  if (!listed?.length) return "no shortlist for today";
-  const rules = normalizeDeskRules(cfg);
-  const pf = await readJsonFile(resolve(process.cwd(), "trader", "portfolio.json"));
-  const held = ((pf?.positions ?? []) as Array<{ ticker?: string }>).map((p) => String(p.ticker ?? "").toUpperCase()).filter(Boolean);
-  const maxPrice = Math.min(rules.budget * (1 - rules.cash_buffer_pct / 100), (rules.budget * rules.max_position_pct) / 100, rules.max_order_usd);
-  const scan = await scanPending({ symbols: listed, maxPrice, exclude: [...held, ...rules.blocked], limit: 8, confirm: 150, nowMs: now.getTime() });
-  const ready = scan.pending.map((x) => x.symbol);
-  await appendFile(join(dir(), `scans-${ny.date}.jsonl`), JSON.stringify({ at: scan.at, source: "shortlist", by: "watch", universe: scan.universe, early: scan.early, checked: scan.confirmed, rejected: scan.rejected, ready }) + "\n").catch(() => undefined);
-  const fresh = freshReady(ready, doneDoc.worked ?? []);
-  if (!fresh.length) return ready.length ? `watch: ${ready.join(", ")} already worked today` : "watch: nothing ready";
-  doneDoc.worked = [...(doneDoc.worked ?? []), ...fresh.map((s) => s.toUpperCase())];
+  const at = now.toISOString();
+  if (due.fresh.length) {
+    for (const s of due.fresh) doneDoc.workedAt[s] = { at, rechecks: 0 };
+    doneDoc.worked = Object.keys(doneDoc.workedAt);
+    await writeFile(AUTO_DONE(ny.date), JSON.stringify(doneDoc));
+    const r = await startLiveRun("live", due.fresh.join(","));
+    return r.ok ? `watch ${slot}: team started for ${due.fresh.join(", ")}` : `not started: ${r.error}`;
+  }
+  // re-checks: the stocks whose skip reasons all cleared, with what changed, so the run decides again fast
+  for (const x of due.recheck) doneDoc.workedAt[x.symbol] = { at, rechecks: (doneDoc.workedAt[x.symbol]?.rechecks ?? 0) + 1 };
   await writeFile(AUTO_DONE(ny.date), JSON.stringify(doneDoc));
-  const r = await startLiveRun("live", fresh.map((x) => x.toUpperCase()).join(","));
-  return r.ok ? `watch ${slot}: team started for ${fresh.join(", ")}` : `not started: ${r.error}`;
+  const what = due.recheck.map((x) => { const row = board.rows.find((r) => r.symbol === x.symbol); return `${x.symbol} (skipped at ${row?.decision?.at ?? "?"} for ${x.reasons.join(", ")}; now relative volume ${row?.relVolume ?? "?"}, price ${row?.price ?? "?"} vs VWAP ${row?.vwap ?? "?"}, SPY ${board.market?.aboveVwap ? "above" : "below"} its VWAP)`; }).join("; ");
+  const r = await startLiveRun("live", due.recheck.map((x) => x.symbol).join(","), `RE-CHECK: ${what}. Those reasons have cleared. Reuse the plan and chart score logged for it today unless the range changed; re-run only what the change touches (the Time Machine from now), then decide again and log the candidate again.`);
+  return r.ok ? `watch ${slot}: re-check started for ${due.recheck.map((x) => x.symbol).join(", ")}` : `not started: ${r.error}`;
 }
 
 const NOTIFIED = () => join(dir(), "notified.json");
@@ -417,7 +484,7 @@ async function notifyWhenReady(now: Date) {
 }
 
 /** While Dodona runs, check every minute: the batch times, a batch to announce, the daily review. Safe to call often. */
-const TIMER_VERSION = 8; // bump when the tick changes, so a running Dodona swaps in the new one
+const TIMER_VERSION = 10; // bump when the tick changes, so a running Dodona swaps in the new one
 export function ensureReviewScheduler() {
   if (g.__dodonaReviewTimer && g.__dodonaTimerVersion === TIMER_VERSION) return;
   if (g.__dodonaReviewTimer) clearInterval(g.__dodonaReviewTimer);
@@ -425,6 +492,7 @@ export function ensureReviewScheduler() {
   g.__dodonaReviewTimer = setInterval(() => {
     void autoBatchTick().catch(() => undefined);
     void maybeStartReview().catch(() => undefined);
+    void maybeStartResearch().catch(() => undefined);
   }, 60_000);
   g.__dodonaReviewTimer.unref?.();
 }

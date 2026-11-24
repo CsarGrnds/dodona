@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentSessionView, AgentToolbox } from "@/components/AgentSessionView";
 import { IbkrOrderPanel } from "@/components/IbkrOrderPanel";
+import { DeskBoard } from "@/components/DeskBoard";
 import { TeamAnalysis } from "@/components/TeamAnalysis";
 import { TradingFloor } from "@/components/TradingFloor";
 import { NextRunCountdown, TeamRunStatus, startTeamRun } from "@/components/TeamRun";
@@ -432,6 +433,8 @@ export default function DeskPage() {
 
       {(tab === "today" || (!practice && PRACTICE_TABS.has(tab))) && (
         <div className="dk-tab">
+          {/* ---- the scout's board (every shortlisted stock, the team's call) and the strategist's research */}
+          {!practice && d.realOrders?.on && <DeskBoard tick={teamTick} />}
           {/* ---- every stock the team analyzed: its chart, the chartist's read, the verdict, its ticket */}
           <section className="panel">
             <div className="row" style={{ marginBottom: 4 }}>
